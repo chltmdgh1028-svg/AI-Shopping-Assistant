@@ -1,6 +1,8 @@
 export type Gender = "female" | "male" | "non_binary" | "prefer_not_to_say";
 export type FitPreference = "slim" | "regular" | "relaxed" | "oversized";
 export type PreferenceCategory = "comfort" | "function" | "care" | "buying";
+export type ExtractionSource = "structured-data" | "meta" | "page" | "ai-inferred" | "user-input" | "demo";
+export type ExtractionConfidence = "high" | "medium" | "low";
 export type PreferenceId =
   | "soft_touch"
   | "avoid_itchy"
@@ -38,6 +40,8 @@ export type UserPreference = {
 export type MaterialBlend = {
   name: string;
   percentage: number;
+  source?: ExtractionSource;
+  confidence?: ExtractionConfidence;
 };
 
 export type ProductSize = {
@@ -45,8 +49,12 @@ export type ProductSize = {
   shoulder?: number;
   chest?: number;
   waist?: number;
+  hip?: number;
   length?: number;
   sleeve?: number;
+  unit?: "cm" | "inch";
+  source?: ExtractionSource;
+  confidence?: ExtractionConfidence;
 };
 
 export type ProductFacts = {
@@ -54,6 +62,7 @@ export type ProductFacts = {
   brand?: string;
   category: "knitwear" | "shirt" | "pants" | "outerwear" | "dress" | "unknown";
   price?: string;
+  currency?: string;
   images: string[];
   description: string;
   materials: MaterialBlend[];
@@ -62,6 +71,14 @@ export type ProductFacts = {
   careInstructions?: string[];
   sourceUrl?: string;
   factsSource: "product_page" | "manual_input" | "demo";
+  extractionMetadata?: {
+    strategy: Array<"json-ld" | "meta" | "semantic-html" | "page-text" | "ai-adapter" | "manual" | "demo">;
+    status: "complete" | "partial" | "failed" | "mock";
+    confidence: ExtractionConfidence;
+    aiProvider: "unavailable" | "mock" | "configured";
+    warnings: string[];
+    fetchedAt?: string;
+  };
 };
 
 export type ProductInput = {

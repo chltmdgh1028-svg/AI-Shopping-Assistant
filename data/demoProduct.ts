@@ -11,14 +11,14 @@ export const demoProduct: ProductFacts = {
   description:
     "포근한 울 블렌드 원사로 짜낸 데일리 니트입니다. 단정한 크루넥과 여유 있는 실루엣으로 겨울 단품 또는 이너로 입기 좋습니다.",
   materials: [
-    { name: "Wool", percentage: 60 },
-    { name: "Nylon", percentage: 25 },
-    { name: "Acrylic", percentage: 15 },
+    { name: "Wool", percentage: 60, source: "demo", confidence: "high" },
+    { name: "Nylon", percentage: 25, source: "demo", confidence: "high" },
+    { name: "Acrylic", percentage: 15, source: "demo", confidence: "high" },
   ],
   sizes: [
-    { name: "M", shoulder: 46, chest: 106, length: 65, sleeve: 59 },
-    { name: "L", shoulder: 48, chest: 112, length: 67, sleeve: 60 },
-    { name: "XL", shoulder: 50, chest: 118, length: 69, sleeve: 61 },
+    { name: "M", shoulder: 46, chest: 106, length: 65, sleeve: 59, unit: "cm", source: "demo", confidence: "high" },
+    { name: "L", shoulder: 48, chest: 112, length: 67, sleeve: 60, unit: "cm", source: "demo", confidence: "high" },
+    { name: "XL", shoulder: 50, chest: 118, length: 69, sleeve: 61, unit: "cm", source: "demo", confidence: "high" },
   ],
   fit: "relaxed",
   careInstructions: [
@@ -28,4 +28,11 @@ export const demoProduct: ProductFacts = {
   ],
   sourceUrl: "https://demo.shopping-assistant.local/wool-blend-knit",
   factsSource: "demo",
+  extractionMetadata: {
+    strategy: ["demo"],
+    status: "mock",
+    confidence: "high",
+    aiProvider: "unavailable",
+    warnings: [],
+  },
 };

@@ -3,10 +3,10 @@ import { evaluateMaterials } from "@/domain/materialEvaluation";
 import { matchPreferences } from "@/domain/preferenceMatching";
 import { calculateCompatibilityScore } from "@/domain/scoring";
 import { recommendSize } from "@/domain/sizeRecommendation";
-import { MockProductParser } from "@/services/productParser";
+import { HybridProductParser } from "@/services/productParser";
 import type { AnalysisResult, ProductInput, UserPreference, UserProfile } from "@/types/shopping";
 
-const parser = new MockProductParser();
+const parser = new HybridProductParser();
 
 export async function analyzeProduct(input: ProductInput, profile: UserProfile, preferences: UserPreference[]): Promise<AnalysisResult> {
   const product = await parser.parse(input);

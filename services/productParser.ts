@@ -20,7 +20,40 @@ export class MockProductParser implements ProductParser {
   }
 }
 
-function parseManualText(manualText: string, sourceUrl?: string): ProductFacts {
+export class HybridProductParser implements ProductParser {
+  async parse(input: ProductInput): Promise<ProductFacts> {
+    if (input.manualText) return parseManualText(input.manualText, input.url);
+    if (!input.url || input.url.includes("demo.shopping-assistant.local")) {
+      return {
+        ...demoProduct,
+        sourceUrl: input.url || demoProduct.sourceUrl,
+      };
+    }
+
+    const response = await fetch("/api/analyze-url", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ url: input.url }),
+    });
+    const payload = (await response.json()) as { product?: ProductFacts; error?: string; code?: string };
+    if (!response.ok || !payload.product) {
+      throw new ProductAnalysisError(payload.error ?? "상품 URL을 자동으로 분석하지 못했습니다.", payload.code ?? "analysis_failed");
+    }
+    return payload.product;
+  }
+}
+
+export class ProductAnalysisError extends Error {
+  constructor(
+    message: string,
+    public code: string,
+  ) {
+    super(message);
+    this.name = "ProductAnalysisError";
+  }
+}
+
+export function parseManualText(manualText: string, sourceUrl?: string): ProductFacts {
   const lower = manualText.toLowerCase();
   const materials = [
     ["Wool", /(?:wool|울)\s*(\d{1,3})\s*%/i],
@@ -52,6 +85,16 @@ function parseManualText(manualText: string, sourceUrl?: string): ProductFacts {
       .slice(0, 4),
     sourceUrl,
     factsSource: "manual_input",
+    extractionMetadata: {
+      strategy: ["manual"],
+      status: materials.length || extractSizes(manualText).length ? "partial" : "failed",
+      confidence: "medium",
+      aiProvider: "unavailable",
+      warnings: [
+        ...(materials.length ? [] : ["직접 입력 내용에서 소재 혼용률을 찾지 못했습니다."]),
+        ...(extractSizes(manualText).length ? [] : ["직접 입력 내용에서 사이즈표를 찾지 못했습니다."]),
+      ],
+    },
   };
 }
 
@@ -62,5 +105,8 @@ function extractSizes(text: string) {
     shoulder: Number(match[2]),
     chest: Number(match[3]),
     length: Number(match[4]),
+    unit: "cm" as const,
+    source: "user-input" as const,
+    confidence: "medium" as const,
   }));
 }
