@@ -1481,6 +1481,27 @@ button:disabled {
   }
 }
 
+/* Short desktop windows (13-14" laptops): keep the whole Home flow, buttons included, above the fold. */
+@media (min-width: 1100px) and (max-height: 820px) {
+  .hero-composition {
+    gap: 1rem;
+    padding-top: 6.5rem;
+    padding-bottom: 1.5rem;
+  }
+
+  .hero-copy h1 {
+    font-size: clamp(3.4rem, min(7.4vw, 13vh), 6rem);
+  }
+
+  .hero-fact {
+    padding-top: 0.55rem;
+  }
+
+  .hero-fact strong {
+    font-size: 1.7rem;
+  }
+}
+
 /* Phones and portrait tablets: the portrait photo has its calm wall at the top and the knit, chair and
    shoes in the lower half. Headline and facts sit on the wall, the URL field sits on the floor below the
    subject, so nothing important is covered. */
