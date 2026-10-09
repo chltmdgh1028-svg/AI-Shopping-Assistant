@@ -1,6 +1,6 @@
 "use client";
 
-import Image from "next/image";
+import { getImageProps } from "next/image";
 import {
   AlertCircle,
   Check,
@@ -19,7 +19,7 @@ import {
   WashingMachine,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { preferenceCategoryLabels, preferenceDefinitions } from "@/data/preferences";
 import { traitToLabel } from "@/domain/materialEvaluation";
 import { localShoppingRepository } from "@/repository/localShoppingRepository";
@@ -58,9 +58,14 @@ const genderLabels: Record<Gender, string> = {
   prefer_not_to_say: "선택 안 함",
 };
 
-const loadingSteps = ["소재 확인", "사이즈표 확인", "핏 추정", "취향 비교", "관리 난도 정리"];
-const LOADING_STEP_MS = 480;
-const MIN_ANALYZING_MS = loadingSteps.length * LOADING_STEP_MS;
+// The first three steps advance on a timer but stop at "내 취향과 비교 중" until the analysis really
+// resolves, so the stage never claims "분석 완료" while the network request is still running.
+const loadingSteps = ["상품 페이지 읽는 중", "소재와 사이즈 확인 중", "내 취향과 비교 중", "분석 완료"];
+const LOADING_STEP_MS = 700;
+const MIN_ANALYZING_MS = (loadingSteps.length - 1) * LOADING_STEP_MS;
+const DONE_HOLD_MS = 450;
+
+const sleep = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms));
 
 const heroFacts = [
   ["WOOL", "60%"],
@@ -81,11 +86,13 @@ export function ShoppingApp() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [loadingIndex, setLoadingIndex] = useState(0);
   const [analysisError, setAnalysisError] = useState<AnalysisErrorState>(null);
+  const analysisInFlight = useRef(false);
 
   useEffect(() => {
     if (!isAnalyzing) return;
     const timer = window.setInterval(() => {
-      setLoadingIndex((index) => Math.min(index + 1, loadingSteps.length - 1));
+      // Never moves backwards: once "분석 완료" is set, a late tick must not undo it.
+      setLoadingIndex((index) => (index >= loadingSteps.length - 2 ? index : index + 1));
     }, LOADING_STEP_MS);
     return () => window.clearInterval(timer);
   }, [isAnalyzing]);
@@ -122,15 +129,22 @@ export function ShoppingApp() {
   }
 
   async function runAnalysis(input?: ProductInput) {
+    // A double tap or Enter+click must not start two analyses (each one can cost a Gemini call).
+    if (analysisInFlight.current) return;
+    analysisInFlight.current = true;
     setIsAnalyzing(true);
     setAnalysisError(null);
     setLoadingIndex(0);
     try {
-      // Local analysis resolves almost instantly; hold the stage long enough to read as a transition.
-      const [analysis] = await Promise.all([
-        analyzeProduct(input ?? { url, manualText: useManual ? manualText : undefined }, profile, preferences),
-        new Promise((resolve) => window.setTimeout(resolve, MIN_ANALYZING_MS)),
-      ]);
+      const startedAt = Date.now();
+      const analysis = await analyzeProduct(input ?? { url, manualText: useManual ? manualText : undefined }, profile, preferences);
+
+      // Fast results (demo, manual text) still hold the stage long enough to read as a transition.
+      const remaining = MIN_ANALYZING_MS - (Date.now() - startedAt);
+      if (remaining > 0) await sleep(remaining);
+      setLoadingIndex(loadingSteps.length - 1);
+      await sleep(DONE_HOLD_MS);
+
       localShoppingRepository.saveAnalysis(analysis);
       setResult(analysis);
       setHistory(localShoppingRepository.getHistory());
@@ -147,6 +161,7 @@ export function ShoppingApp() {
         code: known ? error.code : "analysis_failed",
       });
     } finally {
+      analysisInFlight.current = false;
       setIsAnalyzing(false);
     }
   }
@@ -171,7 +186,16 @@ export function ShoppingApp() {
               onDemo={() => runAnalysis({ url: "https://demo.shopping-assistant.local/wool-blend-knit" })}
             />
           )}
-          {view === "result" && result && <ResultStage result={result} onEditProfile={() => go("profile")} />}
+          {view === "result" && result && (
+            <ResultStage
+              result={result}
+              onEditProfile={() => go("profile")}
+              onManualInput={() => {
+                setUseManual(true);
+                go("home");
+              }}
+            />
+          )}
           {view === "result" && !result && (
             <EmptyJourney title="아직 결과가 없어요" body="상품 URL을 먼저 분석하면 나와의 궁합이 여기에 나타납니다." onAction={() => go("home")} />
           )}
@@ -232,14 +256,7 @@ function HomeStage(props: {
   return (
     <section className="home-stage stage-reveal">
       <div className="hero-media" aria-hidden="true">
-        <Image
-          src="https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?auto=format&fit=crop&w=1800&q=82"
-          alt=""
-          fill
-          sizes="100vw"
-          className="object-cover"
-          priority
-        />
+        <HeroPicture />
       </div>
       <div className="hero-scrim" />
 
@@ -250,7 +267,10 @@ function HomeStage(props: {
         </div>
 
         <div className="hero-facts" aria-label="분석 예시">
-          <p className="facts-caption">샘플 상품으로 본 분석 예시</p>
+          <div className="facts-caption">
+            <span className="fabric-swatch" aria-hidden="true" />
+            <p>샘플 상품 분석 예시<br />울 블렌드 크루넥 니트</p>
+          </div>
           {heroFacts.map(([label, value]) => (
             <div key={label} className="hero-fact">
               <span>{label}</span>
@@ -320,14 +340,7 @@ function AnalyzingStage({ activeIndex }: { activeIndex: number }) {
   return (
     <section className="analyzing-stage stage-reveal" role="status" aria-live="polite">
       <div className="analysis-figure" aria-hidden="true">
-        <Image
-          src="https://images.unsplash.com/photo-1503342217505-b0a15ec3261c?auto=format&fit=crop&w=1400&q=80"
-          alt=""
-          fill
-          sizes="(max-width: 768px) 100vw, 54vw"
-          className="object-cover"
-          priority
-        />
+        <HeroPicture />
       </div>
       <div className="analysis-copy">
         <p className="brand-line">Analyzing</p>
@@ -346,8 +359,9 @@ function AnalyzingStage({ activeIndex }: { activeIndex: number }) {
   );
 }
 
-function ResultStage({ result, onEditProfile }: { result: AnalysisResult; onEditProfile: () => void }) {
+function ResultStage({ result, onEditProfile, onManualInput }: { result: AnalysisResult; onEditProfile: () => void; onManualInput: () => void }) {
   const insights = buildTopInsights(result);
+  const notice = extractionNotice(result);
   const materialTakeaways = [
     { label: "Warmth", value: traitToLabel(result.material.traits.warmth), icon: Shirt },
     { label: "Touch", value: traitToLabel(result.material.traits.softness), icon: Heart },
@@ -359,14 +373,7 @@ function ResultStage({ result, onEditProfile }: { result: AnalysisResult; onEdit
     <article className="result-stage stage-reveal">
       <section className="result-hero">
         <div className="result-media" aria-hidden="true">
-          <Image
-            src={result.product.images[0] || "https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?auto=format&fit=crop&w=1600&q=80"}
-            alt=""
-            fill
-            sizes="100vw"
-            className="object-cover"
-            priority
-          />
+          <ProductVisual key={result.product.images[0] ?? "none"} src={result.product.images[0]} eager />
         </div>
         <div className="result-scrim" />
         <div className="result-score">
@@ -392,6 +399,16 @@ function ResultStage({ result, onEditProfile }: { result: AnalysisResult; onEdit
           </div>
         </section>
 
+        {notice && (
+          <section className="extraction-note" role="status">
+            <AlertCircle size={18} aria-hidden="true" />
+            <div>
+              <p>{notice}</p>
+              <button onClick={onManualInput} className="quiet-button">상품 설명 직접 입력하기</button>
+            </div>
+          </section>
+        )}
+
         <section className="insight-band" aria-label="핵심 판단">
           {insights.map((insight) => (
             <div key={insight.text}>
@@ -403,6 +420,7 @@ function ResultStage({ result, onEditProfile }: { result: AnalysisResult; onEdit
 
         <EditorialSection label="SIZE" title={result.size.recommendedSize ?? "미확인"} kicker="추천 사이즈">
           <p>{result.size.reason}</p>
+          <p className="source-note">{sizeProvenance(result)}</p>
           <div className="inline-cluster">
             <span>신뢰도 {confidenceLabel(result.size.confidence)}</span>
             {result.size.alternatives.map((size) => <span key={size}>대안 {size}</span>)}
@@ -413,6 +431,7 @@ function ResultStage({ result, onEditProfile }: { result: AnalysisResult; onEdit
         </EditorialSection>
 
         <EditorialSection label="MATERIAL" title={result.material.blendSummary} kicker="소재 감각">
+          <p className="source-note">{materialProvenance(result)}</p>
           <div className="takeaway-row">
             {materialTakeaways.map((item) => (
               <div key={item.label}>
@@ -589,8 +608,10 @@ function HistoryStage({ history, onOpen, onStart }: { history: AnalysisResult[];
       <div className="archive-list">
         {history.map((item) => (
           <button key={item.id} onClick={() => onOpen(item)} className="archive-item">
-            <span>{item.score.total}</span>
-            <Image src={item.product.images[0]} alt="" width={180} height={220} className="object-cover" loading="lazy" />
+            <span className="archive-score">{item.score.total}</span>
+            <span className="archive-visual" aria-hidden="true">
+              <ProductVisual key={item.product.images[0] ?? "none"} src={item.product.images[0]} />
+            </span>
             <strong>{item.product.productName}</strong>
             <small>추천 사이즈 {item.size.recommendedSize ?? "미확인"}</small>
           </button>
@@ -609,6 +630,44 @@ function ProgressivePanel({ title, open, onToggle, children }: { title: string; 
       </button>
       {open && <div className="progressive-content stage-reveal">{children}</div>}
     </section>
+  );
+}
+
+// Brand photography with art direction: a portrait crop for phones and portrait tablets, landscape otherwise.
+// This is a brand visual only; it is never shown as the product being analyzed.
+function HeroPicture() {
+  const common = { alt: "", sizes: "100vw" };
+  const {
+    props: { srcSet: portrait },
+  } = getImageProps({ ...common, width: 941, height: 1672, src: "/images/home-hero-mobile.webp" });
+  const { props: landscape } = getImageProps({ ...common, width: 1672, height: 941, src: "/images/home-hero.webp" });
+
+  return (
+    <picture>
+      <source media="(max-width: 1099px) and (orientation: portrait)" srcSet={portrait} />
+      {/* alt is intentionally empty: decorative brand photography */}
+      <img {...landscape} alt="" loading="eager" fetchPriority="high" />
+    </picture>
+  );
+}
+
+// Shop images come from arbitrary hosts, so they are plain <img> (next/image would reject unknown hosts).
+// Only http(s) URLs are accepted, the referrer is withheld, and a missing or broken image becomes a swatch.
+function ProductVisual({ src, eager }: { src?: string; eager?: boolean }) {
+  const [failed, setFailed] = useState(false);
+  const usable = src && /^https?:\/\//i.test(src) && !failed;
+
+  if (!usable) return <span className="fabric-swatch" />;
+  return (
+    <img
+      src={src}
+      alt=""
+      className="product-visual"
+      referrerPolicy="no-referrer"
+      loading={eager ? "eager" : "lazy"}
+      decoding="async"
+      onError={() => setFailed(true)}
+    />
   );
 }
 
@@ -692,9 +751,46 @@ function sourceLabel(source: string) {
 
 function metadataLabel(result: AnalysisResult) {
   const metadata = result.product.extractionMetadata;
+  if (result.product.factsSource === "demo") return "샘플 데이터";
+  if (result.product.factsSource === "manual_input") return "입력한 정보 기준";
   if (!metadata) return "추출 정보 없음";
-  if (metadata.aiProvider === "unavailable") return "AI 추출 미연결";
-  return metadata.status === "partial" ? "일부 자동 추출" : "자동 추출";
+  if (metadata.aiStatus === "used") return metadata.status === "complete" ? "AI로 구조화" : "AI로 일부 구조화";
+  if (metadata.aiStatus === "failed") return "AI 분석 실패, 페이지 기반";
+  return "AI 추출 미연결";
+}
+
+const sourceDescriptions: Record<string, string> = {
+  "structured-data": "상품 페이지의 구조화 정보에서 확인",
+  meta: "상품 페이지 메타 정보에서 확인",
+  page: "상품 페이지 본문에서 확인",
+  "gemini-extracted": "AI가 상품 페이지 문구에서 추출하고 페이지의 숫자와 대조",
+  "user-input": "직접 입력한 값",
+  demo: "샘플 데이터",
+  inferred: "소재 특성을 기반으로 예상",
+};
+
+function materialProvenance(result: AnalysisResult) {
+  const source = result.product.materials[0]?.source;
+  const origin = source ? `혼용률: ${sourceDescriptions[source] ?? "출처 미확인"}.` : "혼용률을 확인하지 못했어요.";
+  return `${origin} 보온성·촉감 같은 소재 감각은 소재별 일반 특성으로 예상한 값이에요.`;
+}
+
+function sizeProvenance(result: AnalysisResult) {
+  const source = result.product.sizes[0]?.source;
+  return source ? `사이즈표: ${sourceDescriptions[source] ?? "출처 미확인"}.` : "상품 페이지에서 사이즈표를 확인하지 못했어요.";
+}
+
+function extractionNotice(result: AnalysisResult) {
+  const { product } = result;
+  if (product.factsSource !== "product_page") return null;
+  const metadata = product.extractionMetadata;
+  if (metadata?.aiStatus === "failed") {
+    return "AI 분석을 쓰지 못해 페이지에서 직접 읽은 정보만 반영했어요. 소재나 사이즈가 빠졌다면 상품 설명을 붙여 넣어 보완할 수 있어요.";
+  }
+  if (metadata?.status !== "complete") {
+    return "상품 페이지에서 소재나 사이즈를 모두 찾지 못했어요. 상품 설명을 붙여 넣으면 더 정확해져요.";
+  }
+  return null;
 }
 
 function verdictCopy(verdict: string) {

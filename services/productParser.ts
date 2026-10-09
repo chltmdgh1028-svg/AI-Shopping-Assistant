@@ -1,6 +1,9 @@
 import { demoProduct } from "@/data/demoProduct";
 import type { ProductFacts, ProductInput } from "@/types/shopping";
 
+// Slightly above the server's own limits (page fetch 8s + Gemini 20s) so the server reports first.
+const ANALYZE_REQUEST_TIMEOUT_MS = 35_000;
+
 export type ProductParser = {
   parse(input: ProductInput): Promise<ProductFacts>;
 };
@@ -30,12 +33,19 @@ export class HybridProductParser implements ProductParser {
       };
     }
 
-    const response = await fetch("/api/analyze-url", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ url: input.url }),
-    });
-    const payload = (await response.json()) as { product?: ProductFacts; error?: string; code?: string };
+    let response: Response;
+    try {
+      response = await fetch("/api/analyze-url", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ url: input.url }),
+        signal: AbortSignal.timeout(ANALYZE_REQUEST_TIMEOUT_MS),
+      });
+    } catch {
+      throw new ProductAnalysisError("분석 서버에 연결하지 못했어요. 잠시 후 다시 시도하거나 상품 설명을 직접 입력해 주세요.", "network_error");
+    }
+
+    const payload = (await response.json().catch(() => ({}))) as { product?: ProductFacts; error?: string; code?: string };
     if (!response.ok || !payload.product) {
       throw new ProductAnalysisError(payload.error ?? "상품 URL을 자동으로 분석하지 못했습니다.", payload.code ?? "analysis_failed");
     }
@@ -64,7 +74,9 @@ export function parseManualText(manualText: string, sourceUrl?: string): Product
     ["Cashmere", /(?:cashmere|캐시미어)\s*(\d{1,3})\s*%/i],
   ].flatMap(([name, pattern]) => {
     const match = manualText.match(pattern as RegExp);
-    return match ? [{ name: name as string, percentage: Number(match[1]) }] : [];
+    return match
+      ? [{ name: name as string, percentage: Number(match[1]), source: "user-input" as const, confidence: "medium" as const }]
+      : [];
   });
 
   const category = lower.includes("knit") || manualText.includes("니트") ? "knitwear" : "unknown";
@@ -74,7 +86,7 @@ export function parseManualText(manualText: string, sourceUrl?: string): Product
     brand: undefined,
     category,
     price: manualText.match(/[\d,]+원/)?.[0],
-    images: demoProduct.images,
+    images: [],
     description: manualText,
     materials,
     sizes: extractSizes(manualText),

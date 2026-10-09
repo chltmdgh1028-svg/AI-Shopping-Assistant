@@ -1,160 +1,113 @@
-import { lookup } from "node:dns/promises";
-import { isBlockedIp, validateHttpUrl, urlSafetyMessage } from "@/lib/urlSafety";
-import { UnavailableProductExtractionProvider, type ProductExtractionProvider } from "@/services/extraction/aiProvider";
+import {
+  ExtractionProviderError,
+  UnavailableProductExtractionProvider,
+  type ExtractionErrorCode,
+  type ProductExtractionProvider,
+} from "@/services/extraction/aiProvider";
 import { extractProductFromHtml, extractVisibleText } from "@/services/extraction/htmlExtraction";
+import { fetchPublicHtml, type SafeFetchResult } from "@/services/extraction/safeFetch";
 import type { ProductFacts } from "@/types/shopping";
-
-const maxBytes = 1_500_000;
-const timeoutMs = 8000;
 
 export type UrlExtractionResult =
   | { ok: true; product: ProductFacts; partial: boolean }
   | { ok: false; code: "invalid_url" | "blocked_url" | "fetch_failed" | "unsupported_content" | "too_large" | "empty_result"; message: string };
 
+type Fetcher = (url: string) => Promise<SafeFetchResult>;
+
+const aiFailureMessages: Record<ExtractionErrorCode, string> = {
+  quota: "AI 분석 사용량이 일시적으로 가득 차 페이지에서 직접 읽은 정보만 사용했어요.",
+  timeout: "AI 분석이 너무 오래 걸려 페이지에서 직접 읽은 정보만 사용했어요.",
+  invalid_output: "AI 분석 결과를 확인하지 못해 페이지에서 직접 읽은 정보만 사용했어요.",
+  auth: "AI 분석 설정에 문제가 있어 페이지에서 직접 읽은 정보만 사용했어요.",
+  model: "AI 분석 설정에 문제가 있어 페이지에서 직접 읽은 정보만 사용했어요.",
+  upstream: "AI 분석에 일시적인 문제가 있어 페이지에서 직접 읽은 정보만 사용했어요.",
+};
+
 export async function extractProductFromUrl(
   rawUrl: string,
   aiProvider: ProductExtractionProvider = new UnavailableProductExtractionProvider(),
+  fetcher: Fetcher = fetchPublicHtml,
 ): Promise<UrlExtractionResult> {
-  const safety = validateHttpUrl(rawUrl);
-  if (!safety.ok) {
-    return {
-      ok: false,
-      code: safety.reason === "invalid_url" ? "invalid_url" : "blocked_url",
-      message: urlSafetyMessage(safety.reason),
-    };
-  }
-
-  const dnsSafe = await validateDnsTarget(safety.url.hostname);
-  if (!dnsSafe) {
-    return { ok: false, code: "blocked_url", message: "보안상 사설망으로 해석되는 주소는 자동 분석할 수 없습니다." };
-  }
-
-  const fetched = await fetchHtml(safety.url);
+  const fetched = await fetcher(rawUrl);
   if (!fetched.ok) return fetched;
 
-  let product = extractProductFromHtml(fetched.html, safety.url.toString());
+  const sourceUrl = fetched.finalUrl;
+  const base = extractProductFromHtml(fetched.html, sourceUrl);
   const pageText = extractVisibleText(fetched.html);
+  const hasStructuredData = base.extractionMetadata?.strategy.includes("json-ld") ?? false;
+  const baseMetadata = base.extractionMetadata ?? { strategy: ["page-text" as const], status: "partial" as const, confidence: "low" as const, warnings: [], aiProvider: "unavailable" as const };
+
+  let product: ProductFacts = base;
 
   if (aiProvider.isAvailable()) {
-    const aiProduct = await aiProvider.extract({
-      url: safety.url.toString(),
-      title: product.productName,
-      metaDescription: product.description,
-      pageText,
-      structuredProduct: product,
-    });
-    product = mergeProductFacts(product, aiProduct);
-    product.extractionMetadata = {
-      strategy: [...(product.extractionMetadata?.strategy ?? []), "ai-adapter"],
-      status: product.extractionMetadata?.status ?? "partial",
-      confidence: product.extractionMetadata?.confidence ?? "medium",
-      aiProvider: aiProvider.providerName,
-      warnings: product.extractionMetadata?.warnings ?? [],
-      fetchedAt: product.extractionMetadata?.fetchedAt ?? new Date().toISOString(),
-    };
+    try {
+      const ai = await aiProvider.extract({
+        url: sourceUrl,
+        title: base.productName,
+        metaDescription: base.description,
+        pageText,
+        structuredProduct: base,
+      });
+      product = mergeProductFacts(base, ai.product, hasStructuredData);
+      product.extractionMetadata = {
+        ...baseMetadata,
+        strategy: [...baseMetadata.strategy, "ai-adapter"],
+        confidence: ai.confidence,
+        aiProvider: aiProvider.providerName,
+        aiStatus: "used",
+        warnings: [...buildWarnings(product, hasStructuredData), ...ai.warnings],
+      };
+    } catch (error) {
+      const code = error instanceof ExtractionProviderError ? error.code : "upstream";
+      product.extractionMetadata = {
+        ...baseMetadata,
+        aiProvider: "unavailable",
+        aiStatus: "failed",
+        warnings: [...baseMetadata.warnings, aiFailureMessages[code]],
+      };
+    }
   } else {
-    product.extractionMetadata = {
-      ...(product.extractionMetadata ?? {
-        strategy: ["page-text"],
-        status: "partial",
-        confidence: "low",
-        warnings: [],
-      }),
-      aiProvider: "unavailable",
-    };
+    product.extractionMetadata = { ...baseMetadata, aiProvider: "unavailable", aiStatus: "not_configured" };
   }
 
   if (!product.productName || product.productName === "상품명 미확인") {
     return { ok: false, code: "empty_result", message: "상품명을 자동으로 확인하지 못했습니다." };
   }
 
-  const partial = Boolean(product.extractionMetadata?.warnings.length);
+  const metadata = product.extractionMetadata;
+  const hasMaterials = product.materials.length > 0;
+  const hasSizes = product.sizes.length > 0;
+  product.extractionMetadata = { ...metadata, status: hasMaterials && hasSizes ? "complete" : hasMaterials || hasSizes ? "partial" : "failed" };
+
+  const partial = product.extractionMetadata.status !== "complete" || product.extractionMetadata.warnings.length > 0;
   return { ok: true, product, partial };
 }
 
-async function validateDnsTarget(hostname: string) {
-  if (/^\d+\.\d+\.\d+\.\d+$/.test(hostname) || hostname.includes(":")) {
-    return !isBlockedIp(hostname);
-  }
-
-  try {
-    const addresses = await lookup(hostname, { all: true, verbatim: true });
-    return addresses.length > 0 && addresses.every((entry) => !isBlockedIp(entry.address));
-  } catch {
-    return false;
-  }
-}
-
-async function fetchHtml(url: URL): Promise<{ ok: true; html: string } | Extract<UrlExtractionResult, { ok: false }>> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    const response = await fetch(url, {
-      redirect: "follow",
-      signal: controller.signal,
-      headers: {
-        "accept": "text/html,application/xhtml+xml",
-        "user-agent": "ShoppingAssistantBot/0.2 (+local-development)",
-      },
-    });
-
-    if (!response.ok) {
-      return { ok: false, code: "fetch_failed", message: `상품 페이지를 읽지 못했습니다. HTTP ${response.status}` };
-    }
-
-    const contentType = response.headers.get("content-type") ?? "";
-    if (!contentType.includes("text/html") && !contentType.includes("application/xhtml")) {
-      return { ok: false, code: "unsupported_content", message: "HTML 상품 페이지가 아닌 응답은 분석할 수 없습니다." };
-    }
-
-    const contentLength = Number(response.headers.get("content-length") ?? "0");
-    if (contentLength > maxBytes) {
-      return { ok: false, code: "too_large", message: "페이지가 너무 커서 자동 분석을 중단했습니다." };
-    }
-
-    const html = await readLimitedResponse(response);
-    return { ok: true, html };
-  } catch {
-    return { ok: false, code: "fetch_failed", message: "쇼핑몰 페이지를 읽는 중 문제가 발생했습니다." };
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-async function readLimitedResponse(response: Response) {
-  const reader = response.body?.getReader();
-  if (!reader) return response.text();
-  const chunks: Uint8Array[] = [];
-  let received = 0;
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    received += value.length;
-    if (received > maxBytes) {
-      await reader.cancel();
-      throw new Error("Response too large");
-    }
-    chunks.push(value);
-  }
-
-  const merged = new Uint8Array(received);
-  let offset = 0;
-  for (const chunk of chunks) {
-    merged.set(chunk, offset);
-    offset += chunk.length;
-  }
-  return new TextDecoder().decode(merged);
-}
-
-function mergeProductFacts(base: ProductFacts, patch: Partial<ProductFacts>): ProductFacts {
+/**
+ * Structured data (JSON-LD) wins for identity and price. Gemini fills what the page text leaves
+ * undetermined and replaces the regex guesses for materials, sizes and care, because it has already
+ * been checked against the page text.
+ */
+export function mergeProductFacts(base: ProductFacts, ai: Partial<ProductFacts>, hasStructuredData: boolean): ProductFacts {
   return {
     ...base,
-    ...patch,
-    images: patch.images?.length ? patch.images : base.images,
-    materials: patch.materials?.length ? patch.materials : base.materials,
-    sizes: patch.sizes?.length ? patch.sizes : base.sizes,
-    careInstructions: patch.careInstructions?.length ? patch.careInstructions : base.careInstructions,
+    productName: (hasStructuredData ? base.productName : ai.productName) || base.productName,
+    brand: base.brand || ai.brand,
+    category: base.category !== "unknown" ? base.category : (ai.category ?? "unknown"),
+    price: base.price || ai.price,
+    currency: base.currency || ai.currency,
+    description: base.description || ai.description || "",
+    materials: ai.materials?.length ? ai.materials : base.materials,
+    sizes: ai.sizes?.length ? ai.sizes : base.sizes,
+    fit: ai.fit ?? base.fit,
+    careInstructions: ai.careInstructions?.length ? ai.careInstructions : base.careInstructions,
   };
+}
+
+function buildWarnings(product: ProductFacts, hasStructuredData: boolean) {
+  const warnings: string[] = [];
+  if (!hasStructuredData) warnings.push("JSON-LD Product 구조화 데이터를 찾지 못했습니다.");
+  if (product.materials.length === 0) warnings.push("소재 혼용률을 자동으로 확인하지 못했습니다.");
+  if (product.sizes.length === 0) warnings.push("사이즈표를 자동으로 확인하지 못했습니다.");
+  return warnings;
 }

@@ -1,7 +1,9 @@
 export type Gender = "female" | "male" | "non_binary" | "prefer_not_to_say";
 export type FitPreference = "slim" | "regular" | "relaxed" | "oversized";
 export type PreferenceCategory = "comfort" | "function" | "care" | "buying";
-export type ExtractionSource = "structured-data" | "meta" | "page" | "ai-inferred" | "user-input" | "demo";
+// Where a value came from. "page"/"structured-data"/"meta" were read from the product page; "gemini-extracted"
+// was structured by Gemini from page text and checked against it; "inferred" is a general estimate.
+export type ExtractionSource = "structured-data" | "meta" | "page" | "gemini-extracted" | "inferred" | "user-input" | "demo";
 export type ExtractionConfidence = "high" | "medium" | "low";
 export type PreferenceId =
   | "soft_touch"
@@ -75,7 +77,9 @@ export type ProductFacts = {
     strategy: Array<"json-ld" | "meta" | "semantic-html" | "page-text" | "ai-adapter" | "manual" | "demo">;
     status: "complete" | "partial" | "failed" | "mock";
     confidence: ExtractionConfidence;
-    aiProvider: "unavailable" | "mock" | "configured";
+    aiProvider: "unavailable" | "mock" | "gemini";
+    // used: Gemini structured the page. not_configured: no API key. failed: Gemini was tried and errored.
+    aiStatus?: "used" | "not_configured" | "failed";
     warnings: string[];
     fetchedAt?: string;
   };

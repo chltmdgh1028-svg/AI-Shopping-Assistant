@@ -5,7 +5,7 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     globals: true,
-    include: ["domain/**/*.test.ts", "services/**/*.test.ts"],
+    include: ["domain/**/*.test.ts", "services/**/*.test.ts", "lib/**/*.test.ts", "app/**/*.test.ts"],
   },
   resolve: {
     alias: {

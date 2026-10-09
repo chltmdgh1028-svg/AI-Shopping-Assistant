@@ -5,9 +5,9 @@ export const demoProduct: ProductFacts = {
   brand: "Atelier Daily",
   category: "knitwear",
   price: "59,000원",
-  images: [
-    "https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?auto=format&fit=crop&w=1200&q=80",
-  ],
+  // No photo on purpose: the sample is made-up data, and the brand hero photo is not this product.
+  // The UI renders a neutral fabric swatch for products without an image.
+  images: [],
   description:
     "포근한 울 블렌드 원사로 짜낸 데일리 니트입니다. 단정한 크루넥과 여유 있는 실루엣으로 겨울 단품 또는 이너로 입기 좋습니다.",
   materials: [
