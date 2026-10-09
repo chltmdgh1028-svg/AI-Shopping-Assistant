@@ -1,8 +1,17 @@
+import { migratePreferences, STORAGE_SCHEMA_VERSION } from "@/domain/preferenceMigration";
 import type { AnalysisResult, UserPreference, UserProfile } from "@/types/shopping";
 
 const profileKey = "shopping-assistant:profile";
 const preferencesKey = "shopping-assistant:preferences";
 const historyKey = "shopping-assistant:history";
+const schemaKey = "shopping-assistant:schema";
+
+const defaultPreferences: UserPreference[] = [
+  { id: "warmth", weight: 2 },
+  { id: "soft_touch", weight: 2 },
+  { id: "low_pilling", weight: 2 },
+  { id: "easy_wash", weight: 1 },
+];
 
 export type ShoppingRepository = {
   getProfile(): UserProfile | null;
@@ -37,15 +46,22 @@ export const localShoppingRepository: ShoppingRepository = {
     writeJson(profileKey, profile);
   },
   getPreferences() {
-    return readJson<UserPreference[]>(preferencesKey, [
-      { id: "warmth", weight: 2 },
-      { id: "soft_touch", weight: 2 },
-      { id: "low_pilling", weight: 2 },
-      { id: "easy_wash", weight: 1 },
-    ]);
+    const stored = readJson<unknown>(preferencesKey, null);
+    if (stored === null) return defaultPreferences;
+
+    const version = readJson<number>(schemaKey, 1);
+    if (version >= STORAGE_SCHEMA_VERSION) return migratePreferences(stored);
+
+    // First read after the preference list changed: migrate once and keep the result. Only preferences are
+    // rewritten. Profile and history are left exactly as they were.
+    const migrated = migratePreferences(stored);
+    writeJson(preferencesKey, migrated);
+    writeJson(schemaKey, STORAGE_SCHEMA_VERSION);
+    return migrated;
   },
   savePreferences(preferences) {
     writeJson(preferencesKey, preferences);
+    writeJson(schemaKey, STORAGE_SCHEMA_VERSION);
   },
   getHistory() {
     return readJson<AnalysisResult[]>(historyKey, []);

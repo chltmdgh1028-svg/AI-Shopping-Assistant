@@ -4,6 +4,7 @@ import {
   type ExtractionErrorCode,
   type ProductExtractionProvider,
 } from "@/services/extraction/aiProvider";
+import { buildPricing, formatPrice } from "@/domain/pricing";
 import { extractProductFromHtml, extractVisibleText } from "@/services/extraction/htmlExtraction";
 import { fetchPublicHtml, type SafeFetchResult } from "@/services/extraction/safeFetch";
 import type { ProductFacts } from "@/types/shopping";
@@ -94,8 +95,7 @@ export function mergeProductFacts(base: ProductFacts, ai: Partial<ProductFacts>,
     productName: (hasStructuredData ? base.productName : ai.productName) || base.productName,
     brand: base.brand || ai.brand,
     category: base.category !== "unknown" ? base.category : (ai.category ?? "unknown"),
-    price: base.price || ai.price,
-    currency: base.currency || ai.currency,
+    ...mergePricing(base, ai),
     description: base.description || ai.description || "",
     materials: ai.materials?.length ? ai.materials : base.materials,
     sizes: ai.sizes?.length ? ai.sizes : base.sizes,
@@ -104,10 +104,29 @@ export function mergeProductFacts(base: ProductFacts, ai: Partial<ProductFacts>,
   };
 }
 
+/**
+ * Price priority is JSON-LD, meta, page, then Gemini. So the page-derived price always wins; Gemini only fills
+ * a missing price, or a missing list price when it agrees with the page on currency.
+ */
+function mergePricing(base: ProductFacts, ai: Partial<ProductFacts>): Pick<ProductFacts, "pricing" | "price" | "currency"> {
+  let pricing = base.pricing;
+  if (!pricing) pricing = ai.pricing;
+  else if (pricing.originalPrice === undefined && ai.pricing?.originalPrice && ai.pricing.currency === pricing.currency) {
+    pricing =
+      buildPricing({ ...pricing, originalPrice: ai.pricing.originalPrice, note: pricing.note ?? "정가는 AI가 페이지에서 추출했어요." }) ?? pricing;
+  }
+  return {
+    pricing,
+    price: pricing ? formatPrice(pricing.currentPrice, pricing.currency) : base.price,
+    currency: pricing?.currency ?? base.currency,
+  };
+}
+
 function buildWarnings(product: ProductFacts, hasStructuredData: boolean) {
   const warnings: string[] = [];
   if (!hasStructuredData) warnings.push("JSON-LD Product 구조화 데이터를 찾지 못했습니다.");
   if (product.materials.length === 0) warnings.push("소재 혼용률을 자동으로 확인하지 못했습니다.");
   if (product.sizes.length === 0) warnings.push("사이즈표를 자동으로 확인하지 못했습니다.");
+  if (!product.pricing) warnings.push("가격을 자동으로 확인하지 못했습니다.");
   return warnings;
 }

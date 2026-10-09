@@ -159,8 +159,7 @@ button:disabled {
 .primary-action,
 .quiet-button,
 .progressive-panel > button,
-.preference-tile,
-.archive-item {
+.progressive-panel > button {
   border: 0;
 }
 
@@ -218,8 +217,7 @@ button:disabled {
 .lens-submit:active,
 .primary-action:active,
 .quiet-button:active,
-.preference-tile:active,
-.archive-item:active {
+.primary-action:active {
   transform: scale(0.98);
 }
 
@@ -509,7 +507,8 @@ button:disabled {
 
 .analysis-copy h2 {
   margin: 0;
-  font-size: clamp(4rem, 10vw, 8.5rem);
+  /* Step names are phrases, not single words, so the headline stays modest and the steps stay on screen. */
+  font-size: clamp(2.4rem, min(5vw, 9vh), 4.8rem);
   line-height: 1.22;
 }
 
@@ -575,7 +574,7 @@ button:disabled {
   line-height: 0.82;
 }
 
-.result-score span {
+.result-score .score-number {
   font-family: var(--font-title), sans-serif;
   font-size: clamp(8rem, 22vw, 18rem);
   font-weight: 760;
@@ -974,91 +973,6 @@ button:disabled {
   gap: 0.75rem;
 }
 
-.preference-tile {
-  min-height: 8.5rem;
-  border-radius: 1.45rem;
-  background: var(--surface);
-  color: var(--ink);
-  padding: 1.15rem;
-  text-align: left;
-  transition:
-    transform 260ms var(--ease-press),
-    background-color 260ms var(--ease-press),
-    color 260ms var(--ease-press),
-    box-shadow 260ms var(--ease-press);
-}
-
-.preference-tile span,
-.preference-tile strong {
-  display: block;
-}
-
-.preference-tile span {
-  font-size: 1.25rem;
-  font-weight: 900;
-}
-
-.preference-tile strong {
-  margin-top: 0.75rem;
-  color: var(--muted);
-  font-size: 0.96rem;
-  line-height: 1.55;
-}
-
-.preference-tile.is-selected {
-  background: var(--ink);
-  color: white;
-  box-shadow: inset 0 -0.45rem 0 rgb(199 255 46 / 0.85);
-}
-
-.preference-tile.is-selected strong {
-  color: rgb(255 255 255 / 0.72);
-}
-
-.archive-list {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 1rem;
-  margin-top: 2rem;
-}
-
-.archive-item {
-  display: grid;
-  min-width: 0;
-  border-radius: 1.5rem;
-  background: var(--surface);
-  padding: 0.75rem;
-  text-align: left;
-  transition:
-    transform 260ms var(--ease-press),
-    background-color 260ms var(--ease-press);
-}
-
-@media (hover: hover) {
-  .archive-item:hover {
-    background: white;
-  }
-}
-
-.archive-item .archive-score {
-  position: absolute;
-  z-index: 1;
-  margin: 0.6rem;
-  border-radius: 999px;
-  background: var(--accent-bright);
-  padding: 0.35rem 0.55rem;
-  color: var(--ink);
-  font-weight: 900;
-}
-
-.archive-visual {
-  display: block;
-  height: 15rem;
-  overflow: hidden;
-  border-radius: 1rem;
-  background: var(--paper-deep);
-}
-
 /* Notices that explain where a fact came from, or what could not be read. */
 .source-note {
   margin: 0.9rem 0 0;
@@ -1090,18 +1004,6 @@ button:disabled {
 
 .result-media .fabric-swatch {
   background-color: #5d5346;
-}
-
-.archive-item strong {
-  margin-top: 0.8rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.archive-item small {
-  margin-top: 0.25rem;
-  color: var(--muted);
 }
 
 .empty-journey {
@@ -1186,10 +1088,6 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 
-  .archive-list {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
   .profile-visual {
     position: relative;
     top: auto;
@@ -1231,8 +1129,7 @@ button:disabled {
 
   .insight-band,
   .field-grid,
-  .preference-cluster > div,
-  .archive-list {
+  .preference-cluster > div {
     grid-template-columns: 1fr;
   }
 
@@ -1255,7 +1152,7 @@ button:disabled {
     min-height: min(100svh, 44rem);
   }
 
-  .result-score span {
+  .result-score .score-number {
     font-size: clamp(6rem, 30vw, 8rem);
   }
 
@@ -1277,7 +1174,7 @@ button:disabled {
   }
 
   .analysis-copy h2 {
-    font-size: clamp(3rem, 15vw, 4.5rem);
+    font-size: clamp(2.2rem, 10.5vw, 3.2rem);
     line-height: 1.2;
   }
 }
@@ -1356,7 +1253,7 @@ button:disabled {
     top: 7.5rem;
   }
 
-  .result-score span {
+  .result-score .score-number {
     font-size: clamp(7rem, 12vw, 12rem);
   }
 
@@ -1458,26 +1355,8 @@ button:disabled {
     align-items: center;
   }
 
-  /* History: same split as Preferences so one or two saved items still compose well. */
-  .history-stage {
-    display: grid;
-    grid-template-columns: minmax(0, 4fr) minmax(0, 8fr);
-    align-items: start;
-    column-gap: clamp(3rem, 7vw, 9rem);
-  }
-
-  .archive-head {
-    position: sticky;
-    top: 8rem;
-  }
-
   .archive-head h1 {
     font-size: clamp(3rem, 5vw, 6rem);
-  }
-
-  .archive-list {
-    grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
-    margin-top: 0;
   }
 }
 

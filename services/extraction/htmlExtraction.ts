@@ -1,3 +1,5 @@
+import { formatPrice } from "@/domain/pricing";
+import { extractPricing } from "@/services/extraction/priceExtraction";
 import type { ExtractionConfidence, ExtractionSource, FitPreference, ProductFacts, ProductSize } from "@/types/shopping";
 
 type JsonRecord = Record<string, unknown>;
@@ -9,6 +11,8 @@ const materialPatterns = [
   ["Cotton", /(?:cotton|면|코튼)\s*(\d{1,3})\s*%/i],
   ["Polyester", /(?:polyester|폴리에스터|폴리)\s*(\d{1,3})\s*%/i],
   ["Cashmere", /(?:cashmere|캐시미어)\s*(\d{1,3})\s*%/i],
+  ["Linen", /(?:linen|리넨)\s*(\d{1,3})\s*%/i],
+  ["Spandex", /(?:spandex|elastane|스판덱스|폴리우레탄)\s*(\d{1,3})\s*%/i],
 ] as const;
 
 export function extractProductFromHtml(html: string, sourceUrl: string): ProductFacts {
@@ -17,6 +21,7 @@ export function extractProductFromHtml(html: string, sourceUrl: string): Product
   const pageText = extractVisibleText(html);
   const structured = jsonLdProduct ? mapJsonLdProduct(jsonLdProduct, sourceUrl) : undefined;
   const pageDerived = extractFromPageText(pageText, sourceUrl);
+  const pricing = extractPricing({ jsonLdProduct, meta, html, pageText });
 
   const product: ProductFacts = {
     productName:
@@ -27,8 +32,9 @@ export function extractProductFromHtml(html: string, sourceUrl: string): Product
       pageDerived.productName,
     brand: structured?.brand || pageDerived.brand,
     category: structured?.category || pageDerived.category || "unknown",
-    price: structured?.price || meta["product:price:amount"] || pageDerived.price,
-    currency: structured?.currency || meta["product:price:currency"],
+    price: pricing ? formatPrice(pricing.currentPrice, pricing.currency) : undefined,
+    currency: pricing?.currency,
+    pricing,
     images: unique([...(structured?.images ?? []), meta["og:image"], meta["twitter:image"]].filter(Boolean) as string[]),
     description: structured?.description || meta["description"] || meta["og:description"] || pageDerived.description,
     materials: structured?.materials?.length ? structured.materials : pageDerived.materials,
@@ -46,7 +52,7 @@ export function extractProductFromHtml(html: string, sourceUrl: string): Product
       status: pageDerived.materials.length || structured?.productName ? "partial" : "failed",
       confidence: jsonLdProduct ? "medium" : "low",
       aiProvider: "unavailable",
-      warnings: buildWarnings(structured, pageDerived),
+      warnings: buildWarnings(structured, pageDerived, Boolean(pricing)),
       fetchedAt: new Date().toISOString(),
     },
   };
@@ -91,7 +97,6 @@ export function extractVisibleText(html: string) {
 }
 
 function mapJsonLdProduct(node: JsonRecord, sourceUrl: string): Partial<ProductFacts> {
-  const offers = firstObject(node.offers);
   const brand = firstObject(node.brand);
   const imageValue = node.image;
   const images = Array.isArray(imageValue) ? imageValue.filter(isString) : isString(imageValue) ? [imageValue] : [];
@@ -100,8 +105,6 @@ function mapJsonLdProduct(node: JsonRecord, sourceUrl: string): Partial<ProductF
     productName: stringValue(node.name) || "상품명 미확인",
     brand: stringValue(brand?.name) || stringValue(node.brand),
     category: categorize(`${stringValue(node.category) ?? ""} ${stringValue(node.name) ?? ""}`),
-    price: stringValue(offers?.price),
-    currency: stringValue(offers?.priceCurrency),
     images,
     description: stringValue(node.description) || "",
     materials: extractMaterials(`${stringValue(node.material) ?? ""} ${stringValue(node.description) ?? ""}`, "structured-data", "medium"),
@@ -116,7 +119,6 @@ function extractFromPageText(text: string, sourceUrl: string): ProductFacts {
   return {
     productName: firstLine?.slice(0, 64) || "상품명 미확인",
     category: categorize(text),
-    price: text.match(/(?:₩|KRW\s*)?[\d,]{4,}\s*원?/)?.[0],
     images: [],
     description: text.slice(0, 800),
     materials: extractMaterials(text, "page", "low"),
@@ -174,11 +176,12 @@ function categorize(text: string): ProductFacts["category"] {
   return "unknown";
 }
 
-function buildWarnings(structured: Partial<ProductFacts> | undefined, pageDerived: ProductFacts) {
+function buildWarnings(structured: Partial<ProductFacts> | undefined, pageDerived: ProductFacts, hasPrice: boolean) {
   const warnings: string[] = [];
   if (!structured) warnings.push("JSON-LD Product 구조화 데이터를 찾지 못했습니다.");
   if (pageDerived.materials.length === 0) warnings.push("소재 혼용률을 자동으로 확인하지 못했습니다.");
   if (pageDerived.sizes.length === 0) warnings.push("사이즈표를 자동으로 확인하지 못했습니다.");
+  if (!hasPrice) warnings.push("가격을 자동으로 확인하지 못했습니다.");
   return warnings;
 }
 

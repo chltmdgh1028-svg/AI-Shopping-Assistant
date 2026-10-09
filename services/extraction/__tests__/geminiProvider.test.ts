@@ -9,7 +9,8 @@ const goodResponse = JSON.stringify({
   productName: "울 니트",
   brand: null,
   category: "knitwear",
-  price: null,
+  currentPrice: null,
+  originalPrice: null,
   currency: null,
   description: null,
   materials: [

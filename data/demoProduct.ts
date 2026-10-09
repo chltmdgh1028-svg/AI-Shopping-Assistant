@@ -4,7 +4,10 @@ export const demoProduct: ProductFacts = {
   productName: "울 블렌드 크루넥 니트",
   brand: "Atelier Daily",
   category: "knitwear",
-  price: "59,000원",
+  price: "₩59,000",
+  currency: "KRW",
+  // A made-up list price and sale price, so the sample can show how a discount is read.
+  pricing: { currentPrice: 59000, originalPrice: 79000, discountRate: 25, currency: "KRW", source: "demo", confidence: "high" },
   // No photo on purpose: the sample is made-up data, and the brand hero photo is not this product.
   // The UI renders a neutral fabric swatch for products without an image.
   images: [],

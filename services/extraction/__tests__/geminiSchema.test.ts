@@ -2,13 +2,14 @@ import { describe, expect, it } from "vitest";
 import { geminiProductSchema, geminiResponseJsonSchema, mapGeminiProduct, type GeminiProduct } from "@/services/extraction/geminiSchema";
 
 const pageText =
-  "울 블렌드 크루넥 니트 59,000원 혼용률 Wool 60% Nylon 25% Acrylic 15% 사이즈 M 어깨 46 가슴 106 총장 65 L 어깨 48 가슴 112 총장 67 세탁: 찬물 울코스 권장";
+  "울 블렌드 크루넥 니트 정가 79,000원 판매가 59,000원 혼용률 Wool 60% Nylon 25% Acrylic 15% 사이즈 M 어깨 46 가슴 106 총장 65 L 어깨 48 가슴 112 총장 67 세탁: 찬물 울코스 권장";
 
 const valid: GeminiProduct = {
   productName: "울 블렌드 크루넥 니트",
   brand: null,
   category: "knitwear",
-  price: "59,000원",
+  currentPrice: 59000,
+  originalPrice: 79000,
   currency: "KRW",
   description: null,
   materials: [
@@ -115,11 +116,63 @@ describe("mapGeminiProduct", () => {
   });
 
   it("returns low confidence and no facts when nothing could be verified", () => {
-    const mapped = mapGeminiProduct({ ...valid, productName: null, price: null, currency: null, fit: "unknown" }, "아무 정보도 없는 페이지");
+    const mapped = mapGeminiProduct({ ...valid, productName: null, currentPrice: null, originalPrice: null, currency: null, fit: "unknown" }, "아무 정보도 없는 페이지");
     expect(mapped.product.materials).toEqual([]);
     expect(mapped.product.sizes).toEqual([]);
     expect(mapped.confidence).toBe("low");
     expect(mapped.product.productName).toBeUndefined();
     expect(mapped.product.fit).toBeUndefined();
+  });
+});
+
+describe("price mapping (Gemini is the last source, and never invents a price)", () => {
+  it("maps a price the page prints, with its list price and the derived discount", () => {
+    const mapped = mapGeminiProduct(valid, pageText);
+    expect(mapped.product.pricing).toMatchObject({
+      currentPrice: 59000,
+      originalPrice: 79000,
+      discountRate: 25,
+      currency: "KRW",
+      source: "gemini-extracted",
+      confidence: "medium",
+    });
+    expect(mapped.product.price).toBe("₩59,000");
+    expect(mapped.product.currency).toBe("KRW");
+  });
+
+  it("drops a current price that the page never prints, and says so", () => {
+    const mapped = mapGeminiProduct({ ...valid, currentPrice: 65000 }, pageText);
+    expect(mapped.product.pricing).toBeUndefined();
+    expect(mapped.product.price).toBeUndefined();
+    expect(mapped.warnings.join(" ")).toContain("가격");
+  });
+
+  it("keeps a verified current price but drops an unverified list price", () => {
+    const mapped = mapGeminiProduct({ ...valid, originalPrice: 99000 }, pageText);
+    expect(mapped.product.pricing).toMatchObject({ currentPrice: 59000 });
+    expect(mapped.product.pricing?.originalPrice).toBeUndefined();
+    expect(mapped.warnings.join(" ")).toContain("정가");
+  });
+
+  it("drops a price in a currency the page does not show", () => {
+    expect(mapGeminiProduct({ ...valid, currency: "USD" }, pageText).product.pricing).toBeUndefined();
+  });
+
+  it("leaves the price missing when the model returns null", () => {
+    const mapped = mapGeminiProduct({ ...valid, currentPrice: null, originalPrice: null, currency: null }, pageText);
+    expect(mapped.product.pricing).toBeUndefined();
+    expect(mapped.warnings).toEqual([]);
+  });
+
+  it("does not turn a converted or estimated number into a price", () => {
+    // 59,000 KRW is roughly 43 USD; a model that converts would report 43.
+    expect(mapGeminiProduct({ ...valid, currentPrice: 43, currency: "USD" }, pageText).product.pricing).toBeUndefined();
+  });
+
+  it("asks for numbers, not text, in the response schema", () => {
+    expect(geminiResponseJsonSchema.properties.currentPrice.type).toEqual(["number", "null"]);
+    expect(geminiResponseJsonSchema.properties.originalPrice.type).toEqual(["number", "null"]);
+    expect(geminiProductSchema.safeParse({ ...valid, currentPrice: "59,000원" }).success).toBe(false);
+    expect(geminiProductSchema.safeParse({ ...valid, currentPrice: -1 }).success).toBe(false);
   });
 });

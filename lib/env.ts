@@ -2,8 +2,13 @@
 
 /**
  * Default model for product extraction: a stable Flash-Lite model. Extraction is high-volume and the
- * endpoint is public, so cost per call matters more than peak reasoning. Set GEMINI_MODEL to a larger
- * stable Flash model (see https://ai.google.dev/gemini-api/docs/models) if extraction quality needs it.
+ * endpoint is public, so cost per call matters more than peak reasoning.
+ *
+ * Checked against Google's models page, pricing page and changelog (October 2026): gemini-3.5-flash-lite
+ * is listed as a stable (GA since 2026-07-21) model, USD 0.30 in / 2.50 out per 1M tokens, and is not
+ * deprecated. gemini-3.8-flash is the newest stable Flash model at USD 0.75 / 3.75; set GEMINI_MODEL to
+ * it (or another id from https://ai.google.dev/gemini-api/docs/models) if extraction quality needs it.
+ * Model ids change over time, which is why this is an environment variable and not hard-coded.
  */
 export const DEFAULT_GEMINI_MODEL = "gemini-3.5-flash-lite";
 

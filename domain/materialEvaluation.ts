@@ -13,7 +13,7 @@ const defaultTraits: Record<MaterialTrait, TraitScore> = {
   naturalness: 2,
 };
 
-function normalizeMaterialName(name: string) {
+export function normalizeMaterialName(name: string) {
   const lower = name.trim().toLowerCase();
   const entry = Object.entries(materialKnowledge).find(([, knowledge]) =>
     knowledge.aliases.some((alias) => lower.includes(alias.toLowerCase())),

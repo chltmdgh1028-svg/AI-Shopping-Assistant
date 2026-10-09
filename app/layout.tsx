@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
 import "./globals.css";
+import "./motion.css";
 
 const titleFont = localFont({
   src: "./fonts/DongeulHand-Regular.ttf",

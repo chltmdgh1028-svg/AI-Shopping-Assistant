@@ -1,4 +1,5 @@
 import { buildCareGuide } from "@/domain/careGuide";
+import { evaluateProduct } from "@/domain/evaluation";
 import { evaluateMaterials } from "@/domain/materialEvaluation";
 import { matchPreferences } from "@/domain/preferenceMatching";
 import { calculateCompatibilityScore } from "@/domain/scoring";
@@ -11,7 +12,8 @@ const parser = new HybridProductParser();
 export async function analyzeProduct(input: ProductInput, profile: UserProfile, preferences: UserPreference[]): Promise<AnalysisResult> {
   const product = await parser.parse(input);
   const material = evaluateMaterials(product.materials);
-  const preferenceMatches = matchPreferences(preferences, material, product);
+  const evaluation = evaluateProduct(product);
+  const preferenceMatches = matchPreferences(preferences, material, product, evaluation);
   const size = recommendSize(profile, product);
   const care = buildCareGuide(product, material);
   const score = calculateCompatibilityScore({
@@ -31,5 +33,7 @@ export async function analyzeProduct(input: ProductInput, profile: UserProfile, 
     size,
     care,
     score,
+    metrics: evaluation.metrics,
+    value: evaluation.value,
   };
 }

@@ -1,3 +1,5 @@
+import { formatPrice } from "@/domain/pricing";
+import { extractPricingFromText } from "@/services/extraction/priceExtraction";
 import { demoProduct } from "@/data/demoProduct";
 import type { ProductFacts, ProductInput } from "@/types/shopping";
 
@@ -63,6 +65,11 @@ export class ProductAnalysisError extends Error {
   }
 }
 
+function manualPricing(text: string) {
+  const pricing = extractPricingFromText(text, "user-input", "medium");
+  return pricing ? { pricing, price: formatPrice(pricing.currentPrice, pricing.currency), currency: pricing.currency } : {};
+}
+
 export function parseManualText(manualText: string, sourceUrl?: string): ProductFacts {
   const lower = manualText.toLowerCase();
   const materials = [
@@ -85,7 +92,7 @@ export function parseManualText(manualText: string, sourceUrl?: string): Product
     productName: manualText.split("\n").find(Boolean)?.slice(0, 42) || "직접 입력한 상품",
     brand: undefined,
     category,
-    price: manualText.match(/[\d,]+원/)?.[0],
+    ...manualPricing(manualText),
     images: [],
     description: manualText,
     materials,

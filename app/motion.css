@@ -1,0 +1,1333 @@
+/* ==========================================================================
+   Motion and interaction system
+   Loaded after globals.css, so these rules refine the base styles.
+
+   Rules of the system
+   - Four durations and four easings (tokens below); nothing hand-types a time or a curve.
+   - Only transform / opacity move continuously. Pointer values flow through CSS variables.
+   - Hover only exists behind (hover: hover) and (pointer: fine), so phones never get stuck hover states.
+   - Glow, aurora and light exist only as a response to an interaction state (hover, selected, focus).
+   - prefers-reduced-motion: movement is removed, state changes stay visible.
+   ========================================================================== */
+
+:root {
+  --motion-fast: 160ms; /* press, hover, focus */
+  --motion-standard: 280ms; /* toggles, small state changes, accordions */
+  --motion-slow: 480ms; /* reveals, page changes */
+  --motion-cinematic: 1100ms; /* hero moments only */
+
+  --ease-standard: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-enter: cubic-bezier(0, 0, 0.2, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+  --ease-emphasized: cubic-bezier(0.05, 0.7, 0.1, 1);
+
+  --cream: #f3ede3;
+}
+
+/* ---------- entrances ---------- */
+
+.enter {
+  animation: rise var(--motion-slow) var(--ease-enter) both;
+  animation-delay: calc(var(--i, 0) * 70ms + 160ms);
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 14px, 0);
+  }
+}
+
+/* Text rising out of a clipped line. The padding keeps descenders from being cut. */
+.mask {
+  display: block;
+  overflow: hidden;
+  padding-block: 0.12em;
+  margin-block: -0.12em;
+}
+
+.mask-inner {
+  display: block;
+  animation: mask-up var(--motion-slow) var(--ease-emphasized) both;
+  animation-delay: calc(var(--i, 0) * 90ms + 120ms);
+}
+
+@keyframes mask-up {
+  from {
+    transform: translate3d(0, 108%, 0);
+  }
+}
+
+.reveal {
+  opacity: 0;
+  transform: translate3d(0, 18px, 0);
+  transition:
+    opacity var(--motion-slow) var(--ease-enter),
+    transform var(--motion-slow) var(--ease-enter);
+  transition-delay: calc(var(--i, 0) * 80ms);
+}
+
+.reveal.is-in {
+  opacity: 1;
+  transform: none;
+}
+
+/* ---------- rolling numbers ---------- */
+
+.rolling-number {
+  --roll-lh: 1.2;
+  display: inline-flex;
+  align-items: center;
+  line-height: var(--roll-lh);
+  font-variant-numeric: tabular-nums;
+}
+
+.roll-digit {
+  display: inline-block;
+  height: calc(var(--roll-lh) * 1em);
+  overflow: hidden;
+}
+
+.roll-strip {
+  display: block;
+  transform: translate3d(0, calc(var(--d) * var(--roll-lh) * -1em), 0);
+  transition: transform var(--motion-slow) var(--ease-emphasized);
+  transition-delay: calc(var(--i, 1) * 28ms);
+  animation: roll-in var(--motion-cinematic) var(--ease-emphasized) backwards;
+  animation-delay: calc(var(--i, 1) * 40ms);
+}
+
+.roll-strip > span {
+  display: block;
+  height: calc(var(--roll-lh) * 1em);
+  line-height: var(--roll-lh);
+  text-align: center;
+}
+
+@keyframes roll-in {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+/* ---------- navigation indicator ---------- */
+
+.nav-track {
+  position: relative;
+}
+
+.nav-indicator {
+  position: absolute;
+  inset-block: 0;
+  left: 0;
+  width: var(--ind-w, 0px);
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.16);
+  opacity: var(--ind-o, 0);
+  transform: translate3d(var(--ind-x, 0px), 0, 0);
+  pointer-events: none;
+}
+
+.nav-indicator::after {
+  position: absolute;
+  bottom: 5px;
+  left: 50%;
+  width: 14px;
+  height: 2px;
+  margin-left: -7px;
+  border-radius: 2px;
+  background: var(--accent-bright);
+  content: "";
+}
+
+/* No slide on first paint: the indicator only animates between items. */
+.nav-track[data-ready] .nav-indicator {
+  transition:
+    transform var(--motion-standard) var(--ease-standard),
+    width var(--motion-standard) var(--ease-standard),
+    opacity var(--motion-fast) linear;
+}
+
+.nav-pill {
+  position: relative;
+  z-index: 1;
+}
+
+.nav-pill.is-active,
+.nav-pill.is-active:hover {
+  background: transparent;
+  color: white;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .nav-pill:hover {
+    background: rgb(255 255 255 / 0.07);
+    color: white;
+  }
+}
+
+/* ---------- Home: cinematic hero ---------- */
+
+.home-stage {
+  --px: 0;
+  --py: 0;
+}
+
+/* Settles from a slightly enlarged frame. 1.1 -> 1 over the cinematic duration: noticeable, never nauseating. */
+.hero-media {
+  transform-origin: 62% 50%;
+  animation:
+    hero-settle var(--motion-cinematic) var(--ease-emphasized) both,
+    hero-open 1300ms var(--ease-emphasized) both;
+}
+
+@keyframes hero-settle {
+  from {
+    transform: scale(1.1);
+  }
+}
+
+@keyframes hero-open {
+  from {
+    clip-path: inset(5% 3% 5% 3% round 1.5rem);
+  }
+  to {
+    clip-path: inset(0 round 0);
+  }
+}
+
+/* Parallax layer: a few pixels against the pointer, oversized so edges never show. */
+.hero-media picture {
+  transform: translate3d(calc(var(--px) * -12px), calc(var(--py) * -8px), 0) scale(1.05);
+  transition: transform 900ms var(--ease-enter);
+  will-change: transform;
+}
+
+/* Light that slowly moves across the room. The wrapper takes the pointer parallax; the pseudo-element drifts. */
+.hero-light {
+  position: absolute;
+  inset: -12%;
+  z-index: -3;
+  pointer-events: none;
+  transform: translate3d(calc(var(--px) * 24px), calc(var(--py) * 16px), 0);
+  transition: transform 1100ms var(--ease-enter);
+}
+
+.hero-light::before {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(42% 38% at 74% 26%, rgb(255 236 186 / 0.5), transparent 70%),
+    radial-gradient(30% 30% at 58% 72%, rgb(199 255 46 / 0.14), transparent 70%);
+  content: "";
+  animation: light-drift 16s ease-in-out infinite alternate;
+}
+
+@keyframes light-drift {
+  from {
+    opacity: 0.7;
+    transform: translate3d(-3%, 2%, 0) scale(1);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(3%, -2%, 0) scale(1.08);
+  }
+}
+
+.lens-submit {
+  position: relative;
+  overflow: hidden;
+  transform: translate3d(var(--tx, 0px), var(--ty, 0px), 0);
+  transition:
+    transform var(--motion-fast) var(--ease-standard),
+    background-color var(--motion-standard) var(--ease-standard);
+}
+
+.lens-submit::after {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(110deg, transparent 30%, rgb(255 255 255 / 0.6) 50%, transparent 70%);
+  content: "";
+  transform: translateX(-120%);
+}
+
+.lens-submit svg {
+  transition: transform var(--motion-standard) var(--ease-standard);
+}
+
+.lens-submit:active {
+  transform: translate3d(var(--tx, 0px), var(--ty, 0px), 0) scale(0.97);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .lens-submit:hover::after {
+    transform: translateX(120%);
+    transition: transform 700ms var(--ease-standard);
+  }
+
+  .lens-submit:hover svg {
+    transform: translateX(2px) scale(1.08);
+  }
+}
+
+/* ---------- Home -> Analyzing: the button floods the screen ---------- */
+
+.flood {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  pointer-events: none;
+  background: radial-gradient(circle at var(--x) var(--y), var(--accent-bright) 0%, #e9f7a6 42%, var(--cream) 100%);
+  animation: flood 1000ms var(--ease-enter) both;
+}
+
+@keyframes flood {
+  0% {
+    clip-path: circle(0 at var(--x) var(--y));
+    opacity: 1;
+  }
+  46% {
+    clip-path: circle(150vmax at var(--x) var(--y));
+    opacity: 1;
+  }
+  100% {
+    clip-path: circle(150vmax at var(--x) var(--y));
+    opacity: 0;
+  }
+}
+
+/* ---------- Analyzing ---------- */
+
+.analysis-figure {
+  overflow: hidden;
+}
+
+/* A thin line sweeps the photograph: the page is being read. It is a layer as tall as the image whose
+   bottom edge is the line, moved with transform only. */
+.scan-line {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(180deg, transparent calc(100% - 90px), rgb(199 255 46 / 0.2) calc(100% - 2px), var(--accent-bright) calc(100% - 2px));
+  animation: scan 2.6s var(--ease-standard) infinite;
+}
+
+@keyframes scan {
+  from {
+    transform: translate3d(0, -100%, 0);
+  }
+  to {
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+.analysis-steps {
+  position: relative;
+  margin: 2rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.analysis-steps::before,
+.analysis-steps::after {
+  position: absolute;
+  top: 1rem;
+  bottom: 1rem;
+  left: calc(1rem - 1px);
+  width: 2px;
+  border-radius: 2px;
+  content: "";
+}
+
+.analysis-steps::before {
+  background: rgb(16 19 20 / 0.12);
+}
+
+/* The fill follows the pipeline's real progress. */
+.analysis-steps::after {
+  background: var(--accent-bright);
+  transform: scaleY(var(--progress, 0));
+  transform-origin: top;
+  transition: transform var(--motion-slow) var(--ease-standard);
+}
+
+.analysis-step span {
+  position: relative;
+  z-index: 1;
+  background: #e5ddcd;
+  transition:
+    background-color var(--motion-standard) var(--ease-standard),
+    transform var(--motion-standard) var(--ease-standard);
+}
+
+.analysis-step.is-active span {
+  background: var(--accent-bright);
+}
+
+.analysis-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 1.2rem;
+  padding: 0.4rem 1rem 0.4rem 0.4rem;
+  border: 1px solid rgb(16 19 20 / 0.12);
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.62);
+  font-size: 0.92rem;
+  font-weight: 700;
+}
+
+.analysis-chip > svg {
+  margin-left: 0.6rem;
+}
+
+.analysis-chip .chip-visual {
+  width: 2rem;
+  height: 2rem;
+  flex: none;
+  border-radius: 999px;
+}
+
+.analysis-skeleton {
+  display: grid;
+  max-width: 20rem;
+  gap: 0.6rem;
+  margin-top: 1.8rem;
+}
+
+.skeleton-line {
+  position: relative;
+  height: 0.8rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgb(16 19 20 / 0.07);
+}
+
+.skeleton-line::after {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.7), transparent);
+  content: "";
+  transform: translateX(-100%);
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+
+.skeleton-line.is-wide {
+  width: 100%;
+}
+
+.skeleton-line.is-short {
+  width: 55%;
+}
+
+@keyframes shimmer {
+  to {
+    transform: translateX(100%);
+  }
+}
+
+/* ---------- Preferences: interactive aurora ---------- */
+
+.preference-count .count-number {
+  color: var(--accent);
+  font-weight: 900;
+}
+
+.preference-tile {
+  --mx: 50%;
+  --my: 50%;
+  --rx: 0deg;
+  --ry: 0deg;
+  --prox: 0;
+  --sweep: 135deg;
+  position: relative;
+  isolation: isolate;
+  min-height: 8.5rem;
+  padding: 1.15rem 3.4rem 1.15rem 1.15rem;
+  overflow: hidden;
+  border: 1px solid rgb(16 19 20 / 0.09);
+  border-color: color-mix(in srgb, var(--accent-bright) calc(var(--prox) * 65%), rgb(16 19 20 / 0.09));
+  border-radius: 1.45rem;
+  background: var(--surface);
+  color: var(--ink);
+  text-align: left;
+  transform: perspective(900px) rotateX(var(--rx)) rotateY(var(--ry));
+  transition:
+    transform var(--motion-fast) var(--ease-standard),
+    border-color var(--motion-standard) var(--ease-standard),
+    background-color var(--motion-slow) var(--ease-standard),
+    color var(--motion-slow) var(--ease-standard);
+}
+
+.preference-tile:active {
+  transform: perspective(900px) rotateX(var(--rx)) rotateY(var(--ry)) scale(0.975);
+}
+
+.tile-label,
+.tile-copy {
+  position: relative;
+  z-index: 1;
+  display: block;
+}
+
+.tile-label {
+  font-size: 1.25rem;
+  font-weight: 900;
+}
+
+.tile-copy {
+  margin-top: 0.75rem;
+  color: var(--muted);
+  font-size: 0.96rem;
+  line-height: 1.55;
+  transition: color var(--motion-slow) var(--ease-standard);
+}
+
+/* Aurora: a bloom layer (opacity + scale on state change) holding a slowly drifting pseudo-element.
+   Warm lime, cream and olive only. It only exists on hover and selection, never on idle tiles. */
+.tile-aurora {
+  position: absolute;
+  inset: -35%;
+  z-index: -2;
+  pointer-events: none;
+  opacity: 0;
+  transform: scale(0.7);
+  transition:
+    opacity var(--motion-slow) var(--ease-standard),
+    transform 700ms var(--ease-emphasized);
+}
+
+.tile-aurora::before {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(32% 32% at 74% 22%, rgb(199 255 46 / 0.6), transparent 70%),
+    radial-gradient(30% 30% at 92% 58%, rgb(255 226 168 / 0.5), transparent 70%),
+    radial-gradient(36% 36% at 52% 8%, rgb(120 160 78 / 0.5), transparent 72%),
+    radial-gradient(26% 26% at 66% 70%, rgb(49 95 85 / 0.45), transparent 70%);
+  content: "";
+}
+
+.tile-sheen {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0;
+  background: radial-gradient(circle 9rem at var(--mx) var(--my), rgb(199 255 46 / 0.22), transparent 70%);
+  transition: opacity var(--motion-standard) var(--ease-standard);
+}
+
+/* Border light that travels around the edge to where the pointer is. */
+.preference-tile::before {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  padding: 1px;
+  border-radius: inherit;
+  background: conic-gradient(from calc(var(--sweep) + 40deg), transparent 0deg, transparent 250deg, rgb(199 255 46 / 0) 270deg, rgb(199 255 46 / 0.95) 320deg, rgb(255 244 214 / 0.95) 345deg, transparent 360deg);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  content: "";
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--motion-standard) var(--ease-standard);
+}
+
+.preference-tile::after {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: linear-gradient(180deg, rgb(10 14 8 / 0.05), rgb(10 14 8 / 0.5));
+  content: "";
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--motion-slow) var(--ease-standard);
+}
+
+.tile-check {
+  position: absolute;
+  top: 0.95rem;
+  right: 0.95rem;
+  z-index: 3;
+  display: grid;
+  width: 1.7rem;
+  height: 1.7rem;
+  place-items: center;
+  border: 1.5px solid rgb(16 19 20 / 0.22);
+  border-radius: 999px;
+  color: #101314;
+  transition:
+    background-color var(--motion-standard) var(--ease-standard),
+    border-color var(--motion-standard) var(--ease-standard);
+}
+
+.tile-check svg {
+  transform: scale(0) rotate(-40deg);
+  transition: transform var(--motion-standard) var(--ease-standard);
+}
+
+/* Selected: dark card, aurora bloom, lit border, check revealed. */
+.preference-tile.is-selected {
+  border-color: rgb(199 255 46 / 0.5);
+  background: #10150d;
+  color: #fff;
+}
+
+.preference-tile.is-selected .tile-copy {
+  color: rgb(255 255 255 / 0.78);
+}
+
+.preference-tile.is-selected .tile-aurora {
+  opacity: 0.85;
+  transform: scale(1);
+}
+
+.preference-tile.is-selected .tile-aurora::before {
+  animation: aurora-drift 14s ease-in-out infinite alternate;
+}
+
+.preference-tile.is-selected::after {
+  opacity: 1;
+}
+
+.preference-tile.is-selected::before {
+  opacity: 0.8;
+}
+
+.preference-tile.is-selected .tile-sheen {
+  background: radial-gradient(circle 9rem at var(--mx) var(--my), rgb(255 244 214 / 0.2), transparent 70%);
+}
+
+.preference-tile.is-selected .tile-check {
+  border-color: var(--accent-bright);
+  background: var(--accent-bright);
+}
+
+.preference-tile.is-selected .tile-check svg {
+  transform: scale(1) rotate(0);
+  transition-delay: 90ms;
+}
+
+@keyframes aurora-drift {
+  from {
+    transform: translate3d(-4%, 3%, 0) rotate(-4deg) scale(1);
+  }
+  to {
+    transform: translate3d(4%, -3%, 0) rotate(5deg) scale(1.08);
+  }
+}
+
+.preference-tile:focus-visible::before {
+  opacity: 1;
+}
+
+/* Pointer-only: light follows the cursor, the tile leans a little, the aurora wakes on unselected hover. */
+@media (hover: hover) and (pointer: fine) {
+  .preference-tile:hover .tile-sheen {
+    opacity: 1;
+  }
+
+  .preference-tile:hover::before {
+    opacity: 1;
+  }
+
+  .preference-tile:not(.is-selected):hover .tile-aurora {
+    opacity: 0.3;
+    transform: scale(0.85);
+  }
+}
+
+/* ---------- Result: scroll storytelling ---------- */
+
+.story-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  color: white;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translate3d(0, 14px, 0);
+  transition:
+    opacity var(--motion-standard) var(--ease-exit),
+    transform var(--motion-standard) var(--ease-exit),
+    visibility 0s linear var(--motion-standard);
+}
+
+.story-layer[data-on="true"] {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+  transition:
+    opacity var(--motion-slow) var(--ease-enter),
+    transform var(--motion-slow) var(--ease-enter),
+    visibility 0s;
+}
+
+.result-score .score-number {
+  --roll-lh: 0.9;
+}
+
+.result-score strong {
+  display: block;
+}
+
+.story-panel {
+  position: absolute;
+  right: clamp(2rem, 3.5vw, 4rem);
+  bottom: clamp(2rem, 4vw, 4rem);
+  left: clamp(2rem, 3.5vw, 4rem);
+  display: grid;
+  max-width: 30rem;
+  gap: 0.9rem;
+}
+
+.story-kicker {
+  margin: 0;
+  color: rgb(255 255 255 / 0.78);
+  font-size: 0.95rem;
+  font-weight: 760;
+}
+
+.story-big {
+  margin: 0;
+  font-family: var(--font-title), sans-serif;
+  font-size: clamp(7rem, 12vw, 12rem);
+  line-height: 1.05;
+}
+
+.story-line {
+  margin: 0;
+  color: rgb(255 255 255 / 0.86);
+  line-height: 1.6;
+}
+
+.story-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.story-chips span {
+  padding: 0.4rem 0.85rem;
+  border: 1px solid rgb(255 255 255 / 0.28);
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.14);
+  font-size: 0.9rem;
+}
+
+.story-bars,
+.story-signals,
+.story-care {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.story-bars {
+  gap: 1.1rem;
+}
+
+.story-bars li {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: baseline;
+  row-gap: 0.45rem;
+}
+
+.story-bars li > span:first-child {
+  font-size: 1.05rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.story-bars .rolling-number {
+  font-family: var(--font-title), sans-serif;
+  font-size: 2.4rem;
+}
+
+.story-bars .rolling-number::after {
+  margin-left: 0.1em;
+  font-size: 0.55em;
+  content: "%";
+}
+
+.bar-track {
+  display: block;
+  grid-column: 1 / -1;
+  height: 3px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: rgb(255 255 255 / 0.24);
+}
+
+.bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent-bright);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 900ms var(--ease-emphasized);
+}
+
+.story-layer[data-on="true"] .bar-fill {
+  transform: scaleX(var(--w));
+  transition-delay: calc(var(--i, 0) * 90ms + 200ms);
+}
+
+.story-signals {
+  gap: 0.6rem;
+}
+
+.story-signals li,
+.story-care li {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  opacity: 0;
+  transform: translate3d(-10px, 0, 0);
+  transition:
+    opacity var(--motion-standard) var(--ease-exit),
+    transform var(--motion-standard) var(--ease-exit);
+}
+
+.story-care {
+  gap: 1rem;
+}
+
+.story-care li {
+  align-items: flex-start;
+  line-height: 1.55;
+}
+
+.story-layer[data-on="true"] :is(.story-signals, .story-care) li {
+  opacity: 1;
+  transform: none;
+  transition:
+    opacity var(--motion-slow) var(--ease-enter),
+    transform var(--motion-slow) var(--ease-enter);
+  transition-delay: calc(var(--i, 0) * 60ms + 160ms);
+}
+
+/* ✓ △ ✕ ?: same four marks in the story panel and in the report. */
+.rating-mark {
+  display: inline-grid;
+  width: 1.6rem;
+  height: 1.6rem;
+  flex: none;
+  place-items: center;
+  border-radius: 999px;
+}
+
+.rating-mark[data-state="good"] {
+  background: var(--accent-bright);
+  color: #101314;
+}
+
+.rating-mark[data-state="fair"] {
+  background: #e8d9a8;
+  color: #101314;
+}
+
+.rating-mark[data-state="poor"] {
+  background: #c0553a;
+  color: #fff;
+}
+
+.rating-mark[data-state="unknown"] {
+  border: 1.5px solid currentColor;
+  background: transparent;
+  color: var(--muted);
+}
+
+.story-layer .rating-mark[data-state="unknown"] {
+  color: rgb(255 255 255 / 0.8);
+}
+
+.signal-summary {
+  margin: 0 0 1rem;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.basis-note {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+/* Accordion: height animates natively where interpolate-size is supported, and simply opens elsewhere. */
+.editorial-details {
+  interpolate-size: allow-keywords;
+}
+
+.editorial-details::details-content {
+  block-size: 0;
+  overflow: clip;
+  transition:
+    block-size var(--motion-standard) var(--ease-standard),
+    content-visibility var(--motion-standard) allow-discrete;
+}
+
+.editorial-details[open]::details-content {
+  block-size: auto;
+}
+
+.editorial-details summary {
+  position: relative;
+  align-items: center;
+  padding-right: 1.8rem;
+}
+
+.editorial-details summary::after {
+  position: absolute;
+  top: 50%;
+  right: 0.25rem;
+  width: 0.55rem;
+  height: 0.55rem;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  content: "";
+  transform: translateY(-70%) rotate(45deg);
+  transition: transform var(--motion-standard) var(--ease-standard);
+}
+
+.editorial-details[open] summary::after {
+  transform: translateY(-30%) rotate(-135deg);
+}
+
+.editorial-details .summary-label {
+  flex: 1;
+}
+
+.editorial-details summary .rating-mark {
+  margin-right: 0.15rem;
+}
+
+.editorial-details summary > strong {
+  font-weight: 700;
+}
+
+/* Underline that draws itself under the label on hover. */
+.summary-label {
+  width: fit-content;
+  background: linear-gradient(currentColor, currentColor) 0 100% / 0 1px no-repeat;
+  transition: background-size var(--motion-standard) var(--ease-standard);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .editorial-details summary:hover .summary-label {
+    background-size: 100% 1px;
+  }
+}
+
+/* Price and value: the reference estimate, never a verdict. */
+.value-card {
+  display: grid;
+  gap: 0.9rem;
+  margin-bottom: 1.4rem;
+  padding: 1.3rem 1.4rem;
+  border: 1px solid rgb(16 19 20 / 0.12);
+  border-radius: 1.4rem;
+  background: rgb(255 255 255 / 0.65);
+}
+
+.value-card[data-status="unavailable"] {
+  background: rgb(16 19 20 / 0.04);
+}
+
+.value-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.value-eyebrow {
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 760;
+}
+
+.value-label {
+  font-size: 1.15rem;
+}
+
+.value-price {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.6rem 1.8rem;
+}
+
+.value-price > div {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.value-key {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.price-number {
+  --roll-lh: 1.1;
+  font-family: var(--font-title), sans-serif;
+  font-size: 2.6rem;
+  color: var(--ink);
+}
+
+.value-price > .value-original {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+}
+
+.value-original s {
+  color: var(--muted);
+}
+
+.value-original em {
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  background: var(--accent-bright);
+  color: var(--ink);
+  font-size: 0.82rem;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.value-summary,
+.value-reference,
+.value-caveat,
+.value-price-missing {
+  margin: 0;
+  line-height: 1.65;
+}
+
+.value-reference {
+  color: var(--ink-soft);
+}
+
+.value-caveat {
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+/* ---------- History: 3D coverflow ---------- */
+
+.history-stage {
+  display: grid;
+  gap: 1.4rem;
+  align-content: start;
+}
+
+.coverflow {
+  --cf-w: clamp(11.5rem, 56vw, 16rem);
+  position: relative;
+  min-width: 0;
+}
+
+.coverflow-track {
+  display: flex;
+  gap: clamp(0.5rem, 2vw, 1.5rem);
+  padding: 2rem calc(50% - var(--cf-w) / 2) 3rem;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  perspective: 1100px;
+  perspective-origin: 50% 40%;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+}
+
+.coverflow-track::-webkit-scrollbar {
+  display: none;
+}
+
+.cf-item {
+  --o: 0;
+  --a: 0;
+  flex: 0 0 var(--cf-w);
+  aspect-ratio: 3 / 4;
+  padding: 0;
+  border: 0;
+  background: none;
+  scroll-snap-align: center;
+  transform: translate3d(calc(var(--o) * -2%), 0, calc(var(--a) * -120px)) rotateY(calc(var(--o) * -36deg)) scale(calc(1 - var(--a) * 0.08));
+  opacity: calc(1 - var(--a) * 0.26);
+  will-change: transform;
+  touch-action: pan-x pan-y;
+}
+
+.cf-item:active {
+  transform: translate3d(calc(var(--o) * -2%), 0, calc(var(--a) * -120px)) rotateY(calc(var(--o) * -36deg)) scale(calc(0.97 - var(--a) * 0.08));
+}
+
+.cf-frame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  border-radius: 1.3rem;
+  background: var(--paper-deep);
+  /* Kept inside the track's padding so the scroll container never clips it into a visible box. */
+  box-shadow: 0 18px 30px -18px rgb(60 40 20 / 0.5);
+}
+
+.cf-visual {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.cf-visual .fabric-swatch,
+.cf-visual .product-visual {
+  height: 100%;
+  transition: transform 700ms var(--ease-standard);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .cf-item.is-active:hover .cf-visual > * {
+    transform: scale(1.05);
+  }
+}
+
+.cf-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  margin-top: -0.6rem;
+}
+
+.cf-arrow {
+  display: grid;
+  width: 2.7rem;
+  height: 2.7rem;
+  place-items: center;
+  border: 1px solid rgb(16 19 20 / 0.18);
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.7);
+  color: var(--ink);
+  transition:
+    transform var(--motion-fast) var(--ease-standard),
+    background-color var(--motion-standard) var(--ease-standard);
+}
+
+.cf-arrow:active {
+  transform: scale(0.94);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .cf-arrow:not(:disabled):hover {
+    background: #fff;
+  }
+}
+
+.cf-count {
+  min-width: 3.5rem;
+  color: var(--muted);
+  font-weight: 700;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.coverflow-info {
+  display: grid;
+  justify-items: center;
+  gap: 0.9rem;
+  text-align: center;
+}
+
+.info-date {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.info-name {
+  max-width: 24rem;
+  margin: 0;
+  font-size: clamp(1.7rem, 7vw, 2.6rem);
+  line-height: 1.25;
+}
+
+.info-stats {
+  display: grid;
+  grid-template-columns: repeat(3, auto);
+  gap: 0.5rem 1.6rem;
+  margin: 0.2rem 0 0;
+}
+
+.info-stats dt {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.info-stats dd {
+  margin: 0.1rem 0 0;
+  font-family: var(--font-title), sans-serif;
+  font-size: 1.7rem;
+}
+
+.price-missing {
+  font-family: var(--font-body), sans-serif;
+  font-size: 0.95rem;
+  color: var(--muted);
+}
+
+.info-tags {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.info-tags li {
+  padding: 0.4rem 0.85rem;
+  border: 1px solid rgb(16 19 20 / 0.14);
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.6);
+  font-size: 0.88rem;
+  font-weight: 700;
+  animation: rise var(--motion-slow) var(--ease-enter) both;
+  animation-delay: calc(var(--i, 0) * 70ms + 120ms);
+}
+
+/* ---------- Shared element: the product visual morphs between screens ---------- */
+
+/* The name exists only while a transition that opens a product is running (html[data-vt]), and then on
+   exactly one source (the centered cover or the analysis chip) and one destination (the result visual). */
+html[data-vt="product"] .result-media,
+html[data-vt="product"] .cf-item.is-active .cf-visual,
+html[data-vt="product"] .analysis-chip .chip-visual {
+  view-transition-name: product-visual;
+}
+
+::view-transition-group(product-visual) {
+  animation-duration: calc(var(--motion-slow) * 1.5);
+  animation-timing-function: var(--ease-emphasized);
+}
+
+::view-transition-old(product-visual),
+::view-transition-new(product-visual) {
+  height: 100%;
+  object-fit: cover;
+}
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: var(--motion-standard);
+}
+
+/* ---------- Desktop layouts for the new screens ---------- */
+
+@media (min-width: 1100px) {
+  .history-stage {
+    grid-template-columns: minmax(0, 4fr) minmax(0, 8fr);
+    grid-template-areas:
+      "head stage"
+      "info stage";
+    align-content: center;
+    column-gap: clamp(3rem, 7vw, 9rem);
+    row-gap: 2rem;
+  }
+
+  .archive-head {
+    grid-area: head;
+    position: static;
+    align-self: end;
+  }
+
+  .coverflow {
+    --cf-w: clamp(14rem, 17vw, 20rem);
+    grid-area: stage;
+  }
+
+  .coverflow-info {
+    grid-area: info;
+    justify-items: start;
+    text-align: left;
+  }
+
+  .info-tags {
+    justify-content: flex-start;
+  }
+
+  .info-name {
+    font-size: clamp(2rem, 2.8vw, 3rem);
+  }
+}
+
+/* Phones and portrait tablets only show the match layer in the hero; the story is a desktop device. */
+@media (max-width: 1099px) {
+  /* The carousel runs edge to edge so neighbouring covers are cut by the screen, not by the page gutter. */
+  .coverflow {
+    width: 100vw;
+    margin-inline: calc(50% - 50vw);
+  }
+
+  .story-layer:not([data-layer="match"]) {
+    display: none;
+  }
+
+  .story-layer[data-layer="match"] {
+    opacity: 1;
+    visibility: visible;
+    transform: none;
+  }
+}
+
+/* ---------- Reduced motion ---------- */
+
+@media (prefers-reduced-motion: reduce) {
+  .hero-media picture,
+  .hero-light {
+    transform: none !important;
+  }
+
+  .hero-media picture {
+    transform: scale(1.02) !important;
+  }
+
+  .hero-light::before,
+  .tile-aurora::before,
+  .scan-line,
+  .skeleton-line::after {
+    animation: none !important;
+  }
+
+  .scan-line {
+    display: none;
+  }
+
+  /* Tiles keep every state change; they just stop leaning and drifting. */
+  .preference-tile,
+  .preference-tile:active {
+    transform: none !important;
+  }
+
+  /* The coverflow stays a coverflow, flattened: size and opacity still show which cover is centered. */
+  .cf-item,
+  .cf-item:active {
+    transform: scale(calc(1 - var(--a) * 0.08)) !important;
+  }
+
+  .reveal {
+    opacity: 1;
+    transform: none;
+  }
+
+  .flood {
+    display: none;
+  }
+}
