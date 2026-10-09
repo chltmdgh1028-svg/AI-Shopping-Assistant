@@ -1331,3 +1331,172 @@ html[data-vt="product"] .analysis-chip .chip-visual {
     display: none;
   }
 }
+
+/* ---------- History: deleting a record (secondary action, never hover-only) ---------- */
+
+.info-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+}
+
+.record-menu {
+  position: relative;
+}
+
+.more-button {
+  display: grid;
+  place-items: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  border: 1px solid rgb(16 19 20 / 0.16);
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.6);
+  color: var(--ink);
+  cursor: pointer;
+  transition:
+    transform var(--motion-fast) var(--ease-standard),
+    background-color var(--motion-fast) var(--ease-standard);
+}
+
+.more-button:focus-visible,
+.menu-item:focus-visible,
+.danger-button:focus-visible {
+  outline: 3px solid var(--accent-bright);
+  outline-offset: 3px;
+}
+
+.more-button:active {
+  transform: scale(0.94);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .more-button:hover {
+    background: rgb(255 255 255 / 0.95);
+  }
+}
+
+.menu-popover {
+  position: absolute;
+  inset-block-end: calc(100% + 0.5rem);
+  inset-inline-end: 0;
+  z-index: 5;
+  min-width: 11rem;
+  padding: 0.35rem;
+  border: 1px solid rgb(16 19 20 / 0.12);
+  border-radius: 1rem;
+  background: rgb(255 255 255 / 0.97);
+  box-shadow: 0 14px 34px rgb(16 19 20 / 0.16);
+  animation: rise var(--motion-fast) var(--ease-enter) both;
+}
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  width: 100%;
+  min-height: 2.75rem;
+  padding: 0.55rem 0.8rem;
+  border: 0;
+  border-radius: 0.7rem;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+}
+
+.menu-item.is-danger {
+  color: var(--danger);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .menu-item:hover {
+    background: rgb(124 50 30 / 0.1);
+  }
+}
+
+.confirm-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 1.2rem;
+  background: rgb(16 19 20 / 0.5);
+  animation: scrim-in var(--motion-standard) var(--ease-standard) both;
+}
+
+.confirm-card {
+  display: grid;
+  gap: 0.7rem;
+  width: min(100%, 24rem);
+  padding: 1.5rem;
+  border-radius: 1.4rem;
+  background: var(--surface);
+  text-align: left;
+  animation: rise var(--motion-standard) var(--ease-enter) both;
+}
+
+.confirm-card h2 {
+  margin: 0;
+  font-size: 1.25rem;
+  line-height: 1.35;
+}
+
+.confirm-card p {
+  margin: 0;
+  color: var(--ink-soft);
+  line-height: 1.6;
+}
+
+.confirm-card .confirm-name {
+  color: var(--ink);
+  font-weight: 760;
+  overflow-wrap: anywhere;
+}
+
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.6rem;
+  margin-top: 0.4rem;
+}
+
+.danger-button {
+  min-height: 2.75rem;
+  padding: 0.6rem 1.4rem;
+  border: 0;
+  border-radius: 999px;
+  background: var(--danger);
+  color: #fff;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.danger-button:active {
+  transform: scale(0.97);
+}
+
+@media (min-width: 1100px) {
+  .info-actions {
+    justify-content: flex-start;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .menu-popover,
+  .confirm-scrim,
+  .confirm-card {
+    animation: none;
+  }
+}
+
+@keyframes scrim-in {
+  from {
+    opacity: 0;
+  }
+}

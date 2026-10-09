@@ -1,4 +1,5 @@
-import { formatPrice } from "@/domain/pricing";
+import { materialKnowledge } from "@/data/materials";
+import { applyBundle, formatPrice } from "@/domain/pricing";
 import { extractPricingFromText } from "@/services/extraction/priceExtraction";
 import { demoProduct } from "@/data/demoProduct";
 import type { ProductFacts, ProductInput } from "@/types/shopping";
@@ -65,24 +66,22 @@ export class ProductAnalysisError extends Error {
   }
 }
 
-function manualPricing(text: string) {
-  const pricing = extractPricingFromText(text, "user-input", "medium");
+function manualPricing(text: string, name: string) {
+  const pricing = applyBundle(extractPricingFromText(text, "user-input", "medium"), name, text);
   return pricing ? { pricing, price: formatPrice(pricing.currentPrice, pricing.currency), currency: pricing.currency } : {};
 }
 
 export function parseManualText(manualText: string, sourceUrl?: string): ProductFacts {
   const lower = manualText.toLowerCase();
-  const materials = [
-    ["Wool", /(?:wool|울)\s*(\d{1,3})\s*%/i],
-    ["Nylon", /(?:nylon|나일론)\s*(\d{1,3})\s*%/i],
-    ["Acrylic", /(?:acrylic|아크릴)\s*(\d{1,3})\s*%/i],
-    ["Cotton", /(?:cotton|면|코튼)\s*(\d{1,3})\s*%/i],
-    ["Polyester", /(?:polyester|폴리에스터)\s*(\d{1,3})\s*%/i],
-    ["Cashmere", /(?:cashmere|캐시미어)\s*(\d{1,3})\s*%/i],
-  ].flatMap(([name, pattern]) => {
-    const match = manualText.match(pattern as RegExp);
-    return match
-      ? [{ name: name as string, percentage: Number(match[1]), source: "user-input" as const, confidence: "medium" as const }]
+  // Every fiber the app knows, by any of its names, written before or after the percentage.
+  const materials = Object.entries(materialKnowledge).flatMap(([key, knowledge]) => {
+    const names = knowledge.aliases.map((alias) => alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+    // "Wool 60%" first. "60% Wool" only when that form is absent: in "Viscose 50% Polyester 30%" the second
+    // pattern would otherwise read the 50 as polyester's share.
+    const match = manualText.match(new RegExp(`(?:${names})\\s*(\\d{1,3})\\s*%`, "i")) ?? manualText.match(new RegExp(`(\\d{1,3})\\s*%\\s*(?:${names})`, "i"));
+    const percentage = Number(match?.[1]);
+    return match && percentage > 0
+      ? [{ name: key.charAt(0).toUpperCase() + key.slice(1), percentage, source: "user-input" as const, confidence: "medium" as const }]
       : [];
   });
 
@@ -92,7 +91,7 @@ export function parseManualText(manualText: string, sourceUrl?: string): Product
     productName: manualText.split("\n").find(Boolean)?.slice(0, 42) || "직접 입력한 상품",
     brand: undefined,
     category,
-    ...manualPricing(manualText),
+    ...manualPricing(manualText, manualText.split("\n").find(Boolean) ?? ""),
     images: [],
     description: manualText,
     materials,
@@ -100,8 +99,8 @@ export function parseManualText(manualText: string, sourceUrl?: string): Product
     fit: lower.includes("oversized") || manualText.includes("오버") ? "oversized" : undefined,
     careInstructions: manualText
       .split("\n")
-      .filter((line) => /세탁|건조|드라이|wash|dry/i.test(line))
-      .slice(0, 4),
+      .filter((line) => /세탁|건조|드라이|비틀|표백|다림질|wash|dry|bleach|wring|iron/i.test(line))
+      .slice(0, 8),
     sourceUrl,
     factsSource: "manual_input",
     extractionMetadata: {

@@ -4,6 +4,7 @@ import { Link2, Search, SlidersHorizontal, WandSparkles } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { HeroPicture, InlineFailure, Mask, type AnalysisErrorState } from "@/components/common";
 import { useFinePointer, useFrameGate, useReducedMotion } from "@/components/motion/hooks";
+import { demoUrl } from "@/data/demoProduct";
 
 const heroFacts = [
   ["WOOL", "60%"],
@@ -154,7 +155,9 @@ export function HomeStage(props: HomeProps) {
             autoComplete="off"
             value={props.url}
             onChange={(event) => props.setUrl(event.target.value)}
-            placeholder="상품 URL을 붙여넣기…"
+            // The sample address is only a stand-in: touching the field removes it so a real link can be pasted at once.
+            onFocus={() => props.url === demoUrl && props.setUrl("")}
+            placeholder="상품 URL을 붙여넣기… (비우면 샘플 분석)"
             inputMode="url"
           />
           <button type="submit" className="lens-submit" ref={submitRef}>

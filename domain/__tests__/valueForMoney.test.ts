@@ -26,13 +26,14 @@ describe("valueForMoney needs a price and a blend", () => {
     expect(result.status).toBe("unavailable");
     expect(result.unavailableReason).toBe("no_price");
     expect(result.label).toBe("판단 어려움");
-    expect(result.summary).toBe("가격이나 소재 정보가 부족해 가격 대비 가치를 판단하기 어려워요.");
+    expect(result.summary).toBe("소재 구성은 확인했지만 상품 페이지에서 가격을 읽지 못해 가격 대비 가치를 판단할 수 없어요.");
+    expect(result.summary).not.toContain("가격이나 소재");
     expect(result.score).toBeUndefined();
   });
 
   it("is unavailable without enough known fibers", () => {
     expect(value(priced(59000, { materials: [] })).unavailableReason).toBe("no_materials");
-    expect(value(priced(59000, { materials: [{ name: "Qiviut", percentage: 100 }] })).unavailableReason).toBe("no_materials");
+    expect(value(priced(59000, { materials: [{ name: "Qiviut", percentage: 100 }] })).unavailableReason).toBe("unknown_fibers");
   });
 
   it("is unavailable for a currency or category it has no reference for", () => {
@@ -102,11 +103,11 @@ describe("labels and confidence never overclaim", () => {
   it("maps score ranges to the three wordings", () => {
     const good = value(priced(59000));
     expect(good.label).toBe("가성비 좋음");
-    expect(good.summary).toBe("현재 가격을 고려하면 소재 구성과 기능이 괜찮은 편이에요.");
+    expect(good.summary).toBe("현재 소재 구성과 가격을 고려하면 실용적인 가격대예요.");
 
     const middle = value(priced(105000));
     expect(middle.label).toBe("가성비 보통");
-    expect(middle.summary).toBe("가격 대비 구성은 무난해요.");
+    expect(middle.summary).toBe("가격은 부담이 크지 않지만, 소재 구성이 특별히 프리미엄한 편은 아니에요.");
 
     const poor = value(priced(210000));
     expect(poor.label).toBe("가성비 아쉬움");

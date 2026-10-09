@@ -56,12 +56,23 @@ export function recommendSize(profile: UserProfile, product: ProductFacts): Size
       ? "가슴둘레와 어깨너비를 함께 비교해 추천 신뢰도가 높아요."
       : confidence === "medium"
         ? "실측 가슴둘레는 있지만 어깨너비가 없어 신뢰도는 보통이에요."
-        : "키와 몸무게 기반 추정이라 정확도가 제한됩니다. 가슴둘레를 입력하면 더 정확해져요.";
+        : "키와 몸무게로 추정한 값이라 확정하기 어려워요. 가슴둘레, 어깨너비, 평소 잘 맞는 옷의 실측을 입력하면 정확해져요.";
+
+  // With only height and weight to go on, one confident size would overstate what is known. Show where each fit points.
+  const fitCandidates =
+    confidence === "low"
+      ? {
+          regular: findClosestSize(product.sizes, chest.value + targetChestEase("regular"))?.name,
+          relaxed: findClosestSize(product.sizes, chest.value + targetChestEase("oversized"))?.name,
+        }
+      : undefined;
 
   return {
     recommendedSize: recommended.name,
     alternatives,
     confidence,
     reason,
+    basis: chest.measured ? "measured" : "estimated",
+    fitCandidates,
   };
 }

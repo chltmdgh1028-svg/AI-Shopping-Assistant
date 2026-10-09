@@ -54,7 +54,7 @@ describe("missing information does not distort the score", () => {
     const value = preferenceMatches.find((match) => match.preferenceId === "value")!;
     expect(value.available).toBe(false);
     expect(value.rating).toBe("unavailable");
-    expect(value.reason).toBe("가격이나 소재 정보가 부족해 가격 대비 가치를 판단하기 어려워요.");
+    expect(value.reason).toBe("소재 구성은 확인했지만 상품 페이지에서 가격을 읽지 못해 가격 대비 가치를 판단할 수 없어요.");
   });
 
   it("drops an unavailable preference from the average (same as not choosing it)", () => {

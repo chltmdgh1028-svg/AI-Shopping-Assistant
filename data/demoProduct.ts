@@ -1,5 +1,8 @@
 import type { ProductFacts } from "@/types/shopping";
 
+// The prefilled address in the Home input. Focusing the input clears it; an empty input analyzes the sample.
+export const demoUrl = "https://demo.shopping-assistant.local/wool-blend-knit";
+
 export const demoProduct: ProductFacts = {
   productName: "울 블렌드 크루넥 니트",
   brand: "Atelier Daily",
@@ -29,7 +32,7 @@ export const demoProduct: ProductFacts = {
     "건조: 건조기 사용 금지, 평평하게 눕혀 건조",
     "주의: 고온 세탁 시 수축 가능",
   ],
-  sourceUrl: "https://demo.shopping-assistant.local/wool-blend-knit",
+  sourceUrl: demoUrl,
   factsSource: "demo",
   extractionMetadata: {
     strategy: ["demo"],

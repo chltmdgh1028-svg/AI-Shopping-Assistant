@@ -1,16 +1,34 @@
 "use client";
 
-import { ChevronLeft, ChevronRight } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
+import { ChevronLeft, ChevronRight, MoreHorizontal, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { EmptyJourney, Mask, ProductVisual } from "@/components/common";
 import { useFrameGate, useReducedMotion } from "@/components/motion/hooks";
 import { RollingNumber } from "@/components/motion/RollingNumber";
-import { formatPrice } from "@/domain/pricing";
+import { formatPriceLabel } from "@/domain/pricing";
 import type { AnalysisResult } from "@/types/shopping";
 
-export function HistoryStage({ history, onOpen, onStart }: { history: AnalysisResult[]; onOpen: (result: AnalysisResult) => void; onStart: () => void }) {
+export function HistoryStage({
+  history,
+  onOpen,
+  onDelete,
+  onStart,
+}: {
+  history: AnalysisResult[];
+  onOpen: (result: AnalysisResult) => void;
+  onDelete: (id: string) => void;
+  onStart: () => void;
+}) {
+  // Told apart so the screen can say "nothing left" after the last record is deleted, not "nothing yet".
+  const [hadRecords, setHadRecords] = useState(history.length > 0);
+  if (history.length > 0 && !hadRecords) setHadRecords(true);
+
   if (history.length === 0) {
-    return <EmptyJourney title="아직 분석 기록이 없습니다" body="상품 링크를 분석하면 궁합 점수와 추천 사이즈가 이곳에 쌓입니다." onAction={onStart} />;
+    return hadRecords ? (
+      <EmptyJourney title="아직 남아 있는 분석 기록이 없어요." body="상품 링크를 분석하면 이곳에 다시 쌓여요." onAction={onStart} />
+    ) : (
+      <EmptyJourney title="아직 분석 기록이 없습니다" body="상품 링크를 분석하면 궁합 점수와 추천 사이즈가 이곳에 쌓입니다." onAction={onStart} />
+    );
   }
 
   return (
@@ -19,12 +37,12 @@ export function HistoryStage({ history, onOpen, onStart }: { history: AnalysisRe
         <p className="brand-line">Archive</p>
         <Mask as="h1">다시 볼 옷들</Mask>
       </div>
-      <Coverflow items={history} onOpen={onOpen} />
+      <Coverflow items={history} onOpen={onOpen} onDelete={onDelete} />
     </section>
   );
 }
 
-function Coverflow({ items, onOpen }: { items: AnalysisResult[]; onOpen: (result: AnalysisResult) => void }) {
+function Coverflow({ items, onOpen, onDelete }: { items: AnalysisResult[]; onOpen: (result: AnalysisResult) => void; onDelete: (id: string) => void }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const trackRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
@@ -64,8 +82,15 @@ function Coverflow({ items, onOpen }: { items: AnalysisResult[]; onOpen: (result
     }
   }, []);
 
+  // When a record is deleted the list shrinks. Stay on the same position, so the next record slides in; after
+  // the last one is deleted that position no longer exists, so the new last record is shown instead.
   useLayoutEffect(() => {
     measure();
+    const track = trackRef.current;
+    if (track) {
+      const index = Math.max(0, Math.min(items.length - 1, activeRef.current));
+      track.scrollLeft = index * geometry.current.pitch;
+    }
     update();
   }, [measure, update, items.length]);
 
@@ -185,9 +210,12 @@ function Coverflow({ items, onOpen }: { items: AnalysisResult[]; onOpen: (result
           ))}
         </ul>
 
-        <button type="button" className="primary-action" onClick={() => onOpen(current)}>
-          <span>결과 보기</span>
-        </button>
+        <div className="info-actions">
+          <button type="button" className="primary-action" onClick={() => onOpen(current)}>
+            <span>결과 보기</span>
+          </button>
+          <RecordMenu name={current.product.productName} onDelete={() => onDelete(current.id)} />
+        </div>
       </div>
     </>
   );
@@ -195,7 +223,7 @@ function Coverflow({ items, onOpen }: { items: AnalysisResult[]; onOpen: (result
 
 function priceNode(item: AnalysisResult) {
   const pricing = item.product.pricing;
-  if (pricing) return <RollingNumber text={formatPrice(pricing.currentPrice, pricing.currency)} />;
+  if (pricing) return <RollingNumber text={formatPriceLabel(pricing.currentPrice, pricing.currency)} />;
   return <span className="price-missing">{item.product.price ?? "확인 못 함"}</span>;
 }
 
@@ -213,4 +241,131 @@ function featuresOf(item: AnalysisResult) {
 function formatDate(iso: string) {
   const date = new Date(iso);
   return Number.isNaN(date.getTime()) ? "" : date.toLocaleDateString("ko-KR", { month: "long", day: "numeric" }) + " 분석";
+}
+
+/**
+ * Delete is a secondary action: a small "more" button beside 결과 보기, always visible (not hover-only), reachable
+ * by tap, keyboard and screen reader. Deleting always asks first.
+ */
+function RecordMenu({ name, onDelete }: { name: string; onDelete: () => void }) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const moreRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const confirmRef = useRef<HTMLButtonElement>(null);
+  const menuId = useId();
+  const titleId = useId();
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    menuRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
+    const onPointerDown = (event: PointerEvent) => {
+      if (!menuRef.current?.contains(event.target as Node) && !moreRef.current?.contains(event.target as Node)) setMenuOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setMenuOpen(false);
+        moreRef.current?.focus();
+      }
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [menuOpen]);
+
+  // The dialog holds focus: it opens on the safe choice, Escape cancels, Tab cycles between its two buttons.
+  useEffect(() => {
+    if (!confirming) return;
+    cancelRef.current?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setConfirming(false);
+        moreRef.current?.focus();
+      } else if (event.key === "Tab") {
+        const first = cancelRef.current;
+        const last = confirmRef.current;
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last?.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first?.focus();
+        }
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [confirming]);
+
+  return (
+    <div className="record-menu">
+      <button
+        ref={moreRef}
+        type="button"
+        className="more-button"
+        aria-label={`${name} 기록 메뉴`}
+        aria-haspopup="menu"
+        aria-expanded={menuOpen}
+        aria-controls={menuOpen ? menuId : undefined}
+        onClick={() => setMenuOpen((open) => !open)}
+      >
+        <MoreHorizontal size={20} aria-hidden="true" />
+      </button>
+
+      {menuOpen && (
+        <div ref={menuRef} id={menuId} className="menu-popover" role="menu" aria-label="기록 메뉴">
+          <button
+            type="button"
+            role="menuitem"
+            className="menu-item is-danger"
+            onClick={() => {
+              setMenuOpen(false);
+              setConfirming(true);
+            }}
+          >
+            <Trash2 size={16} aria-hidden="true" />
+            기록에서 삭제
+          </button>
+        </div>
+      )}
+
+      {confirming && (
+        <div className="confirm-scrim">
+          <div className="confirm-card" role="alertdialog" aria-modal="true" aria-labelledby={titleId}>
+            <h2 id={titleId}>이 상품을 기록에서 삭제할까요?</h2>
+            <p className="confirm-name">{name}</p>
+            <p>이 기록만 지워지고, 프로필과 취향 설정은 그대로 남아요.</p>
+            <div className="confirm-actions">
+              <button
+                ref={cancelRef}
+                type="button"
+                className="quiet-button"
+                onClick={() => {
+                  setConfirming(false);
+                  moreRef.current?.focus();
+                }}
+              >
+                취소
+              </button>
+              <button
+                ref={confirmRef}
+                type="button"
+                className="danger-button"
+                onClick={() => {
+                  setConfirming(false);
+                  onDelete();
+                }}
+              >
+                삭제
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }

@@ -15,10 +15,14 @@ const defaultTraits: Record<MaterialTrait, TraitScore> = {
 
 export function normalizeMaterialName(name: string) {
   const lower = name.trim().toLowerCase();
-  const entry = Object.entries(materialKnowledge).find(([, knowledge]) =>
-    knowledge.aliases.some((alias) => lower.includes(alias.toLowerCase())),
-  );
-  return entry?.[0] ?? lower;
+  // The longest matching alias wins, so "폴리우레탄" is spandex and not polyester ("폴리").
+  let best: { key: string; length: number } | undefined;
+  for (const [key, knowledge] of Object.entries(materialKnowledge)) {
+    for (const alias of knowledge.aliases) {
+      if (lower.includes(alias.toLowerCase()) && (!best || alias.length > best.length)) best = { key, length: alias.length };
+    }
+  }
+  return best?.key ?? lower;
 }
 
 function clampTrait(value: number): TraitScore {

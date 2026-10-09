@@ -2,15 +2,35 @@ import type { MaterialTrait, TraitScore } from "@/types/shopping";
 
 // Per-fiber scores on a 1-5 scale for properties that the coarse "traits" do not cover.
 // In traits, "weight" means lightness (higher = lighter).
+//
+// absorbency, moistureWicking and quickDry are three different things. A fiber that soaks up sweat (cotton,
+// viscose) is not one that moves it off the skin, and neither dries quickly by itself. Whether a garment
+// actually wicks or dries fast depends on yarn, knit and finish, which the blend alone cannot show.
 export type MaterialExtras = {
+  absorbency: TraitScore;
   moistureWicking: TraitScore;
+  quickDry: TraitScore;
   dryerSafe: TraitScore;
   wrinkleResistance: TraitScore;
 };
 
+/**
+ * natural: plant or animal fiber used as it is (cotton, wool, linen, cashmere).
+ * regenerated-cellulosic: plant cellulose that is dissolved and re-spun (viscose, rayon, modal, lyocell).
+ * Plant origin does not make it a natural fiber, so it is scored apart from cotton and wool.
+ * synthetic: made from petrochemical polymers.
+ */
+export type FiberClass = "natural" | "regenerated-cellulosic" | "synthetic";
+
+export const fiberClassLabel: Record<FiberClass, string> = {
+  natural: "천연 섬유",
+  "regenerated-cellulosic": "재생 셀룰로오스 섬유",
+  synthetic: "합성 섬유",
+};
+
 export type MaterialKnowledge = {
   aliases: string[];
-  natural: boolean;
+  fiberClass: FiberClass;
   extras: MaterialExtras;
   traits: Record<MaterialTrait, TraitScore>;
   pros: string[];
@@ -18,20 +38,22 @@ export type MaterialKnowledge = {
   careHints: string[];
 };
 
+// Viscose, rayon, modal and lyocell share a family but not their behavior, so each has its own entry.
+// Order matters for alias lookup: "viscose rayon" resolves to viscose.
 export const materialKnowledge: Record<string, MaterialKnowledge> = {
   wool: {
     aliases: ["wool", "울", "양모"],
-    natural: true,
-    extras: { moistureWicking: 3, dryerSafe: 1, wrinkleResistance: 4 },
+    fiberClass: "natural",
+    extras: { absorbency: 5, moistureWicking: 3, quickDry: 2, dryerSafe: 1, wrinkleResistance: 4 },
     traits: { warmth: 5, softness: 3, breathability: 4, durability: 3, pillingRisk: 3, careEase: 2, stretch: 2, weight: 3, naturalness: 5 },
     pros: ["보온성이 좋아요.", "습도 조절에 유리해요.", "겨울 니트에 잘 맞아요."],
     cons: ["제품에 따라 까슬거릴 수 있어요.", "세탁과 건조에 주의가 필요해요."],
     careHints: ["찬물 또는 울코스를 권장해요.", "건조기는 피하는 편이 좋아요."],
   },
   nylon: {
-    aliases: ["nylon", "나일론"],
-    natural: false,
-    extras: { moistureWicking: 4, dryerSafe: 3, wrinkleResistance: 4 },
+    aliases: ["nylon", "polyamide", "나일론", "폴리아미드"],
+    fiberClass: "synthetic",
+    extras: { absorbency: 2, moistureWicking: 4, quickDry: 4, dryerSafe: 3, wrinkleResistance: 4 },
     traits: { warmth: 2, softness: 3, breathability: 2, durability: 5, pillingRisk: 2, careEase: 4, stretch: 3, weight: 4, naturalness: 1 },
     pros: ["내구성을 보완해요.", "형태 유지에 도움이 돼요.", "비교적 가벼워요."],
     cons: ["통기성은 천연 섬유보다 낮을 수 있어요."],
@@ -39,8 +61,8 @@ export const materialKnowledge: Record<string, MaterialKnowledge> = {
   },
   acrylic: {
     aliases: ["acrylic", "아크릴"],
-    natural: false,
-    extras: { moistureWicking: 3, dryerSafe: 3, wrinkleResistance: 4 },
+    fiberClass: "synthetic",
+    extras: { absorbency: 2, moistureWicking: 3, quickDry: 4, dryerSafe: 3, wrinkleResistance: 4 },
     traits: { warmth: 3, softness: 3, breathability: 2, durability: 3, pillingRisk: 4, careEase: 4, stretch: 2, weight: 4, naturalness: 1 },
     pros: ["가볍고 비교적 합리적인 가격대에 잘 쓰여요.", "울의 부피감을 보완할 수 있어요."],
     cons: ["마찰이 많은 부위에 보풀이 생길 수 있어요.", "고급스러운 촉감은 제품 차이가 커요."],
@@ -48,17 +70,17 @@ export const materialKnowledge: Record<string, MaterialKnowledge> = {
   },
   cotton: {
     aliases: ["cotton", "면", "코튼"],
-    natural: true,
-    extras: { moistureWicking: 2, dryerSafe: 3, wrinkleResistance: 2 },
+    fiberClass: "natural",
+    extras: { absorbency: 4, moistureWicking: 2, quickDry: 2, dryerSafe: 3, wrinkleResistance: 2 },
     traits: { warmth: 2, softness: 4, breathability: 5, durability: 3, pillingRisk: 2, careEase: 4, stretch: 2, weight: 3, naturalness: 5 },
     pros: ["피부에 편안한 편이에요.", "통기성이 좋아요.", "세탁 접근성이 좋아요."],
     cons: ["건조가 느릴 수 있어요.", "구김이 생기기 쉬워요."],
     careHints: ["수축 방지를 위해 낮은 온도 세탁을 권장해요."],
   },
   polyester: {
-    aliases: ["polyester", "폴리에스터", "폴리"],
-    natural: false,
-    extras: { moistureWicking: 5, dryerSafe: 5, wrinkleResistance: 5 },
+    aliases: ["polyester", "폴리에스터", "폴리에스테르", "폴리"],
+    fiberClass: "synthetic",
+    extras: { absorbency: 1, moistureWicking: 5, quickDry: 5, dryerSafe: 5, wrinkleResistance: 5 },
     traits: { warmth: 2, softness: 3, breathability: 2, durability: 4, pillingRisk: 3, careEase: 5, stretch: 3, weight: 4, naturalness: 1 },
     pros: ["세탁과 건조가 편한 편이에요.", "구김이 적고 형태 유지가 쉬워요."],
     cons: ["땀이 차면 답답하게 느낄 수 있어요."],
@@ -66,17 +88,17 @@ export const materialKnowledge: Record<string, MaterialKnowledge> = {
   },
   cashmere: {
     aliases: ["cashmere", "캐시미어"],
-    natural: true,
-    extras: { moistureWicking: 2, dryerSafe: 1, wrinkleResistance: 3 },
+    fiberClass: "natural",
+    extras: { absorbency: 4, moistureWicking: 2, quickDry: 2, dryerSafe: 1, wrinkleResistance: 3 },
     traits: { warmth: 5, softness: 5, breathability: 4, durability: 2, pillingRisk: 3, careEase: 1, stretch: 2, weight: 5, naturalness: 5 },
     pros: ["가볍고 따뜻해요.", "촉감이 매우 부드러운 편이에요."],
     cons: ["마찰과 세탁에 섬세한 관리가 필요해요.", "보풀 관리가 필요할 수 있어요."],
     careHints: ["가능하면 드라이클리닝 또는 손세탁을 권장해요."],
   },
   spandex: {
-    aliases: ["spandex", "elastane", "polyurethane", "스판", "폴리우레탄"],
-    natural: false,
-    extras: { moistureWicking: 3, dryerSafe: 2, wrinkleResistance: 4 },
+    aliases: ["spandex", "elastane", "polyurethane", "스판", "폴리우레탄", "엘라스탄"],
+    fiberClass: "synthetic",
+    extras: { absorbency: 1, moistureWicking: 3, quickDry: 4, dryerSafe: 2, wrinkleResistance: 4 },
     traits: { warmth: 1, softness: 3, breathability: 2, durability: 3, pillingRisk: 2, careEase: 3, stretch: 5, weight: 5, naturalness: 1 },
     pros: ["신축성을 크게 높여요.", "움직임이 많은 옷에 유리해요."],
     cons: ["열에 약할 수 있어요."],
@@ -84,11 +106,51 @@ export const materialKnowledge: Record<string, MaterialKnowledge> = {
   },
   linen: {
     aliases: ["linen", "리넨"],
-    natural: true,
-    extras: { moistureWicking: 4, dryerSafe: 2, wrinkleResistance: 1 },
+    fiberClass: "natural",
+    extras: { absorbency: 5, moistureWicking: 4, quickDry: 4, dryerSafe: 2, wrinkleResistance: 1 },
     traits: { warmth: 1, softness: 2, breathability: 5, durability: 4, pillingRisk: 1, careEase: 3, stretch: 1, weight: 3, naturalness: 5 },
-    pros: ["시원하고 통기성이 아주 좋아요.", "세탁할수록 부드러워지는 편이에요."],
+    pros: ["시원하고 통기성이 아주 좋아요.", "세탁할수록 부드러운 편이에요."],
     cons: ["구김이 쉽게 생겨요.", "처음에는 뻣뻣하게 느껴질 수 있어요."],
     careHints: ["구김이 생기기 쉬워 약간 물기가 있을 때 펴서 말리면 좋아요."],
+  },
+  viscose: {
+    aliases: ["viscose", "비스코스", "비스코즈"],
+    fiberClass: "regenerated-cellulosic",
+    extras: { absorbency: 5, moistureWicking: 2, quickDry: 2, dryerSafe: 1, wrinkleResistance: 1 },
+    traits: { warmth: 2, softness: 5, breathability: 4, durability: 2, pillingRisk: 3, careEase: 2, stretch: 2, weight: 4, naturalness: 3 },
+    pros: ["촉감이 부드럽고 몸에 흐르듯 떨어지는 편이에요.", "흡습성이 있어 시원하게 입는 편이에요."],
+    cons: [
+      "젖으면 강도가 약해져 세탁할 때 조심해야 해요.",
+      "구김과 형태 안정성은 혼방과 직조에 따라 달라요.",
+      "폴리에스터보다 천천히 말라요.",
+    ],
+    careHints: ["젖은 상태에서 비틀거나 당기지 않는 편이 좋아요.", "그늘에서 눕혀 말리면 형태 변형을 줄일 수 있어요."],
+  },
+  rayon: {
+    aliases: ["rayon", "레이온"],
+    fiberClass: "regenerated-cellulosic",
+    extras: { absorbency: 5, moistureWicking: 2, quickDry: 2, dryerSafe: 1, wrinkleResistance: 1 },
+    traits: { warmth: 2, softness: 4, breathability: 4, durability: 2, pillingRisk: 3, careEase: 2, stretch: 2, weight: 4, naturalness: 3 },
+    pros: ["가볍고 부드럽게 흐르는 느낌이에요.", "흡습성이 있는 편이에요."],
+    cons: ["젖으면 약해지고 줄어들 수 있어요.", "구김이 생기기 쉬워요."],
+    careHints: ["손세탁이나 드라이클리닝 안내를 우선 확인하세요."],
+  },
+  modal: {
+    aliases: ["modal", "모달"],
+    fiberClass: "regenerated-cellulosic",
+    extras: { absorbency: 5, moistureWicking: 3, quickDry: 3, dryerSafe: 2, wrinkleResistance: 3 },
+    traits: { warmth: 2, softness: 5, breathability: 4, durability: 3, pillingRisk: 2, careEase: 3, stretch: 3, weight: 4, naturalness: 3 },
+    pros: ["매우 부드럽고 비스코스보다 젖었을 때 덜 약해요.", "형태 유지가 비교적 좋은 편이에요."],
+    cons: ["여전히 고온 건조에는 약할 수 있어요."],
+    careHints: ["낮은 온도 세탁을 권장해요."],
+  },
+  lyocell: {
+    aliases: ["lyocell", "tencel", "리오셀", "라이오셀", "텐셀"],
+    fiberClass: "regenerated-cellulosic",
+    extras: { absorbency: 5, moistureWicking: 3, quickDry: 3, dryerSafe: 2, wrinkleResistance: 2 },
+    traits: { warmth: 2, softness: 4, breathability: 4, durability: 3, pillingRisk: 2, careEase: 3, stretch: 2, weight: 4, naturalness: 3 },
+    pros: ["부드럽고 통기성이 좋은 편이에요.", "비스코스보다 젖었을 때 강도가 잘 유지돼요."],
+    cons: ["구김이 생길 수 있어요.", "가공에 따라 촉감 차이가 커요."],
+    careHints: ["낮은 온도 세탁을 권장해요."],
   },
 };

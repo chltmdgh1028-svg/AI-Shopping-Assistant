@@ -2,14 +2,23 @@ import { baselinePrice, fiberCostFactor, priceRatioCurve } from "@/data/priceRef
 import { materialKnowledge } from "@/data/materials";
 import { normalizeMaterialName } from "@/domain/materialEvaluation";
 import { readBlend, type MaterialMetricMap } from "@/domain/metrics";
+import { formatPriceLabel } from "@/domain/pricing";
 import type { ExtractionConfidence, ProductFacts, ValueEvaluation } from "@/types/shopping";
 
-export const VALUE_CAVEAT =
-  "시장 가격 데이터 없이 소재 구성과 가격 구간으로 추정한 참고 값이에요. 브랜드, 봉제 완성도, 원단 등급은 상품 페이지만으로 확인할 수 없어 반영하지 못했어요.";
+/** Said whenever the verdict is product-relative, i.e. always: the app has no market price data. */
+export const VALUE_LIMITATION = "유사 상품의 시장 가격과 원단 등급까지 비교한 평가는 아닙니다.";
 
-const LOW_INFO = "가격이나 소재 정보가 부족해 가격 대비 가치를 판단하기 어려워요.";
+export const VALUE_CAVEAT = `${VALUE_LIMITATION} 봉제 품질, 브랜드 프리미엄, 실물 마감은 상품 페이지만으로 확인할 수 없어요.`;
 
-function unavailable(reason: NonNullable<ValueEvaluation["unavailableReason"]>, summary: string, product: ProductFacts): ValueEvaluation {
+// What a product page cannot show. Listed so a limited verdict names the real gaps instead of "info missing".
+const MISSING = ["유사 상품의 시장 가격", "원단 등급", "봉제 품질", "브랜드 프리미엄", "실물 마감"];
+
+function unavailable(
+  reason: NonNullable<ValueEvaluation["unavailableReason"]>,
+  summary: string,
+  product: ProductFacts,
+  missing: string[] = MISSING,
+): ValueEvaluation {
   return {
     status: "unavailable",
     unavailableReason: reason,
@@ -17,6 +26,7 @@ function unavailable(reason: NonNullable<ValueEvaluation["unavailableReason"]>, 
     summary,
     confidence: "low",
     pricing: product.pricing,
+    missing,
     caveat: VALUE_CAVEAT,
   };
 }
@@ -34,53 +44,119 @@ function interpolate(ratio: number) {
   return last[1];
 }
 
+const knownStatement = "현재 판매가와 소재 구성은 확인했지만,";
+
 /**
- * "가격 대비 구성": what the page shows (fibers, durability, care) relative to the price the buyer actually
- * pays. It is a reference estimate, not a verdict: with no market-wide data it compares the price to a coarse
- * expectation for this kind of garment and blend, and it says so. The discount never raises the score,
- * because a list price may be inflated; only the current price is judged.
+ * Value judged from the product's own facts: what the buyer pays per piece (a confirmed 1+1 halves it), the
+ * fibers, how long it should hold up, and how much care it asks for. It is "product-relative": the app has no
+ * market-wide price data, so it never claims "cheaper than similar items" and always says the market and the
+ * fabric grade were not compared. Missing price or blend makes it unavailable; a missing market does not.
+ * The discount rate is reported but never raises the score, because a list price can be inflated.
  */
 export function evaluateValueForMoney(product: ProductFacts, metrics: MaterialMetricMap): ValueEvaluation {
   const pricing = product.pricing;
-  if (!pricing) return unavailable("no_price", LOW_INFO, product);
-
   const blend = readBlend(product);
-  if (blend.knownShare < 0.7) return unavailable("no_materials", LOW_INFO, product);
+  const hasBlend = product.materials.length > 0;
+
+  if (!pricing) {
+    return unavailable(
+      "no_price",
+      hasBlend
+        ? "소재 구성은 확인했지만 상품 페이지에서 가격을 읽지 못해 가격 대비 가치를 판단할 수 없어요."
+        : "상품 페이지에서 가격과 소재 구성을 모두 읽지 못해 가격 대비 가치를 판단할 수 없어요.",
+      product,
+      hasBlend ? ["판매가", ...MISSING] : ["판매가", "소재 구성", ...MISSING],
+    );
+  }
+
+  if (!hasBlend) {
+    return unavailable(
+      "no_materials",
+      "가격은 확인했지만 소재 혼용률을 읽지 못해 가격 대비 가치를 판단할 수 없어요.",
+      product,
+      ["소재 혼용률", ...MISSING],
+    );
+  }
+  if (blend.knownShare < 0.7) {
+    return unavailable(
+      "unknown_fibers",
+      "가격과 소재 구성은 확인했지만, 소재 대부분의 특성 정보가 없어 가격 대비 가치를 판단하기 어려워요.",
+      product,
+      ["소재 특성 정보", ...MISSING],
+    );
+  }
 
   const baselines = baselinePrice[pricing.currency];
   if (!baselines) {
-    return unavailable("unsupported_currency", `${pricing.currency} 가격은 아직 가격 대비 구성을 평가하지 못해요.`, product);
+    return unavailable(
+      "unsupported_currency",
+      `${knownStatement} ${pricing.currency} 가격은 비교할 기준이 없고, 비슷한 상품의 시장 가격과 원단 등급, 봉제 품질도 알 수 없어 가격 대비 가치를 확정하기 어렵습니다.`,
+      product,
+    );
   }
   if (product.category === "unknown") {
-    return unavailable("unknown_category", "상품 종류를 확인하지 못해 가격 대비 구성을 판단하기 어려워요.", product);
+    return unavailable(
+      "unknown_category",
+      `${knownStatement} 상품 종류를 알 수 없고, 비슷한 상품의 시장 가격과 원단 등급, 봉제 품질도 알 수 없어 가격 대비 가치를 확정하기 어렵습니다.`,
+      product,
+    );
   }
 
   const factor = blend.average((knowledge) => {
     const key = Object.keys(materialKnowledge).find((name) => materialKnowledge[name] === knowledge);
     return (key && fiberCostFactor[key]) || 1;
   });
-  if (factor === undefined) return unavailable("no_materials", LOW_INFO, product);
+  if (factor === undefined) {
+    return unavailable("unknown_fibers", "가격과 소재 구성은 확인했지만 소재 특성 정보가 없어 가격 대비 가치를 판단하기 어려워요.", product, ["소재 특성 정보", ...MISSING]);
+  }
 
+  // A confirmed 1+1 is judged per piece; an unconfirmed "[1+1]" label changes nothing.
+  const bundled = pricing.unitPrice !== undefined && pricing.bundleQuantity !== undefined && pricing.bundleQuantity > 1;
+  const effectivePrice = bundled ? pricing.unitPrice! : pricing.currentPrice;
   const expectedPrice = baselines[product.category] * factor;
-  const ratio = pricing.currentPrice / expectedPrice;
+  const ratio = effectivePrice / expectedPrice;
 
-  // A small nudge from how long the garment should hold up: durable, pill-resistant blends are worth more per won.
+  // Small nudges: how long it should hold up, how much care it asks for, and functional claims the page itself makes.
   const quality = [metrics.durability, metrics.pillingResistance].filter((metric) => metric.available);
   const qualityAverage = quality.length ? quality.reduce((sum, metric) => sum + metric.score, 0) / quality.length : 60;
-  const nudge = Math.max(-5, Math.min(5, Math.round((qualityAverage - 60) / 8)));
-  const score = Math.max(0, Math.min(100, Math.round(interpolate(ratio) + nudge)));
+  const durabilityNudge = Math.max(-5, Math.min(5, Math.round((qualityAverage - 60) / 8)));
 
-  // This is an estimate against reference points, so it is never "high"; weak inputs lower it further.
-  const confidence: ExtractionConfidence = pricing.confidence === "low" || blend.knownShare < 0.9 ? "low" : "medium";
+  const careMetrics = [metrics.washEase, metrics.dryerSafe].filter((metric) => metric.available);
+  const careAverage = careMetrics.length ? careMetrics.reduce((sum, metric) => sum + metric.score, 0) / careMetrics.length : undefined;
+  const careNudge = careAverage === undefined ? 0 : careAverage <= 30 ? -3 : careAverage >= 75 ? 2 : 0;
 
+  const claimed = [metrics.moistureWicking, metrics.pillingResistance].filter((metric) => metric.available && metric.source === "product-page").length;
+  const functionNudge = Math.min(3, claimed * 2);
+
+  const score = Math.max(0, Math.min(100, Math.round(interpolate(ratio) + durabilityNudge + careNudge + functionNudge)));
+
+  // An estimate against reference points, so never "high"; weak or unconfirmed inputs lower it further.
+  const confidence: ExtractionConfidence = pricing.confidence === "low" || blend.knownShare < 0.9 || pricing.bundleUnconfirmed ? "low" : "medium";
+
+  const unitText = bundled ? `1+1 기준 개당 약 ${formatPriceLabel(effectivePrice, pricing.currency)}입니다. ` : "";
+  const priceWord = pricing.discountRate !== undefined ? "할인 가격" : "가격";
   const [label, summary] =
     score >= 72
-      ? (["가성비 좋음", "현재 가격을 고려하면 소재 구성과 기능이 괜찮은 편이에요."] as const)
+      ? (["가성비 좋음", `${unitText}현재 소재 구성과 ${priceWord}을 고려하면 실용적인 가격대예요.`] as const)
       : score >= 50
-        ? (["가성비 보통", "가격 대비 구성은 무난해요."] as const)
-        : (["가성비 아쉬움", "가격에 비해 소재 구성은 아쉬울 수 있어요."] as const);
+        ? (["가성비 보통", `${unitText}가격은 부담이 크지 않지만, 소재 구성이 특별히 프리미엄한 편은 아니에요.`] as const)
+        : (["가성비 아쉬움", `${unitText}현재 가격 대비 소재와 기능 구성은 조금 아쉬운 편이에요.`] as const);
 
-  return { status: "available", score, label, summary, confidence, pricing, expectedPrice: Math.round(expectedPrice), caveat: VALUE_CAVEAT };
+  return {
+    status: "available",
+    scope: "product-relative",
+    marketComparison: "unavailable",
+    score,
+    label,
+    summary,
+    confidence,
+    pricing,
+    expectedPrice: Math.round(expectedPrice),
+    unitPrice: bundled ? effectivePrice : undefined,
+    bundleQuantity: bundled ? pricing.bundleQuantity : undefined,
+    missing: MISSING,
+    caveat: VALUE_CAVEAT,
+  };
 }
 
 // Kept for callers that only have the blend name: resolves a fiber name to its knowledge key.

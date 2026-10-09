@@ -15,13 +15,14 @@ export async function analyzeProduct(input: ProductInput, profile: UserProfile, 
   const evaluation = evaluateProduct(product);
   const preferenceMatches = matchPreferences(preferences, material, product, evaluation);
   const size = recommendSize(profile, product);
-  const care = buildCareGuide(product, material);
+  const care = buildCareGuide(product, material, evaluation);
   const score = calculateCompatibilityScore({
     preferences,
     preferenceMatches,
     material,
     product,
     size,
+    evaluation,
   });
 
   return {

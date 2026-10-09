@@ -137,3 +137,44 @@ export function numberTokens(text: string): Set<number> {
   }
   return values;
 }
+
+// "[1+1]" in a name is a promotion label, not a statement of what is in the box: some shops mean a free gift,
+// some mean a second colour. The count is only trusted when the page text spells it out.
+const bundleHint = /1\s*\+\s*1|원\s*플러스\s*원|buy\s*one\s*,?\s*get\s*one|\bbogo\b/i;
+const bundleConfirmations = [
+  /1\s*\+\s*1[^.\n]{0,40}(2\s*(개|벌|장|매|pcs|pieces|items?)|두\s*(개|벌|장)|총\s*2)/i,
+  /2\s*(개|벌|장|매)\s*(구성|세트|제공|증정|발송|묶음)/,
+  /set\s*of\s*2|\b2[\s-]*(pack|pcs|pieces)\b/i,
+  /1\s*\+\s*1[^.\n]{0,24}(추가\s*증정|무료\s*증정|동일\s*상품|같은\s*상품|함께\s*(발송|배송))/,
+];
+
+const wholeUnitCurrencies = new Set(["KRW", "JPY"]);
+
+/**
+ * Adds the per-piece price when the page confirms the price buys two. Without that confirmation the price is
+ * left exactly as listed and the pricing only records that a bundle label exists.
+ */
+export function applyBundle(pricing: ProductPricing | undefined, productName: string, pageText: string): ProductPricing | undefined {
+  if (!pricing) return undefined;
+  const hinted = bundleHint.test(productName) || bundleHint.test(pageText);
+  if (!hinted) return pricing;
+
+  if (!bundleConfirmations.some((pattern) => pattern.test(pageText) || pattern.test(productName))) {
+    return { ...pricing, bundleUnconfirmed: true };
+  }
+
+  const bundleQuantity = 2;
+  const unit = pricing.currentPrice / bundleQuantity;
+  return {
+    ...pricing,
+    promotionType: "bundle",
+    bundleQuantity,
+    unitPrice: wholeUnitCurrencies.has(pricing.currency) ? Math.round(unit) : Math.round(unit * 100) / 100,
+    bundleUnconfirmed: undefined,
+  };
+}
+
+/** How a price reads in the UI and in sentences: Korean won as "59,900원", other currencies as formatPrice. */
+export function formatPriceLabel(amount: number, currency: string) {
+  return currency === "KRW" ? `${Math.round(amount).toLocaleString("ko-KR")}원` : formatPrice(amount, currency);
+}

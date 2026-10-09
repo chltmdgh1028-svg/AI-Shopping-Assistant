@@ -1463,3 +1463,62 @@ button:disabled {
     transition-duration: 1ms !important;
   }
 }
+
+/* Care: the page's own instructions and the app's advice are separate blocks. */
+.care-split {
+  display: grid;
+  gap: 1.2rem;
+}
+
+.care-verdict {
+  margin: 0;
+  padding: 0.7rem 1rem;
+  border-radius: 1rem;
+  background: rgb(16 19 20 / 0.05);
+  color: var(--ink);
+  font-weight: 760;
+}
+
+.care-block {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.care-block h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  letter-spacing: 0;
+}
+
+.care-block.is-inferred {
+  padding-top: 1.1rem;
+  border-top: 1px dashed var(--line);
+  color: var(--ink-soft);
+}
+
+.care-list {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.care-list li {
+  line-height: 1.6;
+}
+
+.care-list strong {
+  display: inline-block;
+  min-width: 4.4rem;
+  color: var(--ink);
+}
+
+.value-unit {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.value-unit strong {
+  font-size: 1.15rem;
+}

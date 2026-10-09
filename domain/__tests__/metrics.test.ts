@@ -51,8 +51,10 @@ describe("one metric per preference", () => {
 describe("breathability and moisture wicking are separate", () => {
   it("scores them differently for the same fabric", () => {
     const polyester = evaluateMaterialMetrics(product([{ name: "Polyester", percentage: 100 }]));
-    // Polyester wicks sweat very well but does not let air through.
-    expect(polyester.moistureWicking.score).toBeGreaterThan(polyester.breathability.score + 30);
+    // Polyester suggests quick drying but does not let air through. Without a page claim the wicking estimate is
+    // capped at "보통", so the gap is smaller than the raw fiber property, yet still points the right way.
+    expect(polyester.moistureWicking.score).toBeGreaterThan(polyester.breathability.score);
+    expect(polyester.moistureWicking.score).toBeLessThanOrEqual(60);
 
     const cotton = evaluateMaterialMetrics(product([{ name: "Cotton", percentage: 100 }]));
     // Cotton is the opposite: airy, slow to dry.
@@ -64,7 +66,7 @@ describe("breathability and moisture wicking are separate", () => {
     const linen = evaluateMaterialMetrics(product([{ name: "Linen", percentage: 100 }]));
     expect(wool.breathability.score).not.toBe(wool.moistureWicking.score);
     expect(linen.breathability.score).toBe(100);
-    expect(linen.moistureWicking.score).toBe(80);
+    expect(linen.moistureWicking.score).toBe(60); // capped: a blend alone cannot confirm wicking
   });
 });
 

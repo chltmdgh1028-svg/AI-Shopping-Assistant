@@ -10,7 +10,7 @@ import { withViewTransition } from "@/components/motion/viewTransition";
 import { PreferencesStage } from "@/components/PreferencesStage";
 import { ProfileStage } from "@/components/ProfileStage";
 import { ResultStage } from "@/components/ResultStage";
-import { demoProduct } from "@/data/demoProduct";
+import { demoProduct, demoUrl } from "@/data/demoProduct";
 import { localShoppingRepository } from "@/repository/localShoppingRepository";
 import { analyzeProduct } from "@/services/analyzeProduct";
 import { ProductAnalysisError } from "@/services/productParser";
@@ -29,8 +29,6 @@ const defaultPreferences: UserPreference[] = [
   { id: "low_pilling", weight: 2 },
   { id: "easy_wash", weight: 1 },
 ];
-
-const demoUrl = "https://demo.shopping-assistant.local/wool-blend-knit";
 
 const sleep = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms));
 const prefersReducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -105,6 +103,12 @@ export function ShoppingApp() {
     );
   }
 
+  function deleteHistoryItem(id: string) {
+    setHistory(localShoppingRepository.deleteAnalysis(id));
+    // A deleted record must not stay reachable through the Result tab.
+    setResult((current) => (current?.id === id ? null : current));
+  }
+
   function saveProfile(next: UserProfile) {
     setProfile(next);
     localShoppingRepository.saveProfile(next);
@@ -124,7 +128,8 @@ export function ShoppingApp() {
     analysisInFlight.current = true;
     setAnalysisError(null);
 
-    const request = input ?? { url, manualText: useManual ? manualText : undefined };
+    // An emptied input means "show me the sample", so the placeholder address never has to be typed over.
+    const request = input ?? { url: url.trim() || demoUrl, manualText: useManual ? manualText : undefined };
     setTarget(describeTarget(request));
 
     // The real work starts now. The flood below is only the way the screen changes while it runs.
@@ -210,7 +215,7 @@ export function ShoppingApp() {
           {view === "result" && !result && (
             <EmptyJourney title="아직 결과가 없어요" body="상품 URL을 먼저 분석하면 나와의 궁합이 여기에 나타납니다." onAction={() => go("home")} />
           )}
-          {view === "history" && <HistoryStage history={history} onOpen={openResult} onStart={() => go("home")} />}
+          {view === "history" && <HistoryStage history={history} onOpen={openResult} onDelete={deleteHistoryItem} onStart={() => go("home")} />}
           {view === "preferences" && <PreferencesStage selected={selectedPreferenceIds} onToggle={togglePreference} />}
           {view === "profile" && <ProfileStage profile={profile} onSave={saveProfile} />}
         </>

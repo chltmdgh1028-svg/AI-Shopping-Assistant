@@ -20,6 +20,8 @@ export type ShoppingRepository = {
   savePreferences(preferences: UserPreference[]): void;
   getHistory(): AnalysisResult[];
   saveAnalysis(result: AnalysisResult): void;
+  /** Removes one record and returns what is left. Profile and preferences are untouched. */
+  deleteAnalysis(id: string): AnalysisResult[];
 };
 
 function readJson<T>(key: string, fallback: T): T {
@@ -69,5 +71,10 @@ export const localShoppingRepository: ShoppingRepository = {
   saveAnalysis(result) {
     const next = [result, ...this.getHistory().filter((item) => item.id !== result.id)].slice(0, 12);
     writeJson(historyKey, next);
+  },
+  deleteAnalysis(id) {
+    const next = this.getHistory().filter((item) => item.id !== id);
+    writeJson(historyKey, next);
+    return next;
   },
 };

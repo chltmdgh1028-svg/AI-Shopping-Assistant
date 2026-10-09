@@ -1,5 +1,6 @@
 import { calculatePreferenceScore } from "@/domain/preferenceMatching";
-import type { CompatibilityScore, MaterialEvaluation, PreferenceMatch, ProductFacts, SizeRecommendation, UserPreference } from "@/types/shopping";
+import { evaluateProduct, type ProductEvaluation } from "@/domain/evaluation";
+import type { CompatibilityScore, MaterialEvaluation, MetricMap, MetricResult, PreferenceMatch, ProductFacts, SizeRecommendation, UserPreference } from "@/types/shopping";
 
 function scoreSize(size: SizeRecommendation) {
   if (size.confidence === "high") return 92;
@@ -8,28 +9,34 @@ function scoreSize(size: SizeRecommendation) {
   return 30;
 }
 
-function hasMaterials(material: MaterialEvaluation) {
-  return material.materialNotes.length > 0;
+type Weighted = Array<{ metric: MetricResult; weight: number }>;
+
+/** Weighted mean over the metrics that could be judged; null when none could. Unavailable ones leave the denominator. */
+function weightedMean(entries: Weighted): number | null {
+  const usable = entries.filter((entry) => entry.metric.available);
+  const weightSum = usable.reduce((sum, entry) => sum + entry.weight, 0);
+  if (weightSum === 0) return null;
+  return Math.round(usable.reduce((sum, entry) => sum + entry.metric.score * entry.weight, 0) / weightSum);
 }
 
-function scoreCare(product: ProductFacts, material: MaterialEvaluation): number | null {
-  // Neither a blend nor a care label: nothing to judge, so leave it out instead of scoring a default.
-  if (!hasMaterials(material) && !product.careInstructions?.length) return null;
-  const base = material.traits.careEase * 18;
-  const productCareBonus = product.careInstructions?.length ? 8 : -5;
-  return Math.max(20, Math.min(100, base + productCareBonus));
+// Care and material fit are read from the same canonical metrics the preference list and the care section use,
+// so a label that says "hand wash, dry in shade" cannot be rated "easy care" here and "hard" there.
+function scoreCare(metrics: MetricMap): number | null {
+  return weightedMean([
+    { metric: metrics.washEase, weight: 0.5 },
+    { metric: metrics.dryerSafe, weight: 0.3 },
+    { metric: metrics.wrinkleResistance, weight: 0.2 },
+  ]);
 }
 
-function scoreMaterial(material: MaterialEvaluation): number | null {
-  if (!hasMaterials(material)) return null;
-  const weighted =
-    material.traits.warmth * 0.16 +
-    material.traits.softness * 0.18 +
-    material.traits.durability * 0.22 +
-    (6 - material.traits.pillingRisk) * 0.18 +
-    material.traits.careEase * 0.14 +
-    material.traits.breathability * 0.12;
-  return Math.round((weighted / 5) * 100);
+function scoreMaterial(metrics: MetricMap): number | null {
+  return weightedMean([
+    { metric: metrics.durability, weight: 0.26 },
+    { metric: metrics.softness, weight: 0.22 },
+    { metric: metrics.warmth, weight: 0.2 },
+    { metric: metrics.pillingResistance, weight: 0.18 },
+    { metric: metrics.breathability, weight: 0.14 },
+  ]);
 }
 
 const componentWeights = { preferenceMatch: 0.36, materialMatch: 0.26, sizeConfidence: 0.22, careCompatibility: 0.16 } as const;
@@ -52,12 +59,14 @@ export function calculateCompatibilityScore(args: {
   material: MaterialEvaluation;
   product: ProductFacts;
   size: SizeRecommendation;
+  evaluation?: ProductEvaluation;
 }): CompatibilityScore {
+  const { metrics } = args.evaluation ?? evaluateProduct(args.product);
   const components = {
     preferenceMatch: calculatePreferenceScore(args.preferenceMatches, args.preferences),
-    materialMatch: scoreMaterial(args.material),
+    materialMatch: scoreMaterial(metrics),
     sizeConfidence: scoreSize(args.size),
-    careCompatibility: scoreCare(args.product, args.material),
+    careCompatibility: scoreCare(metrics),
   };
 
   const entries = (Object.keys(componentWeights) as Array<keyof typeof componentWeights>).flatMap((key) => {

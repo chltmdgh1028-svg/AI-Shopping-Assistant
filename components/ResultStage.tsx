@@ -1,13 +1,25 @@
 "use client";
 
-import { AlertCircle, Archive, Check, CircleHelp, Heart, Ruler, ShieldCheck, Shirt, Triangle, WashingMachine, Wind, X } from "lucide-react";
+import { AlertCircle, Check, CircleHelp, Ruler, Shirt, Triangle, WashingMachine, X } from "lucide-react";
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { Mask, ProductVisual } from "@/components/common";
 import { Reveal } from "@/components/motion/Reveal";
 import { RollingNumber } from "@/components/motion/RollingNumber";
-import { traitToLabel } from "@/domain/materialEvaluation";
-import { formatPrice } from "@/domain/pricing";
-import type { AnalysisResult, MetricBasis, PreferenceMatch, ValueEvaluation } from "@/types/shopping";
+import {
+  basisLabel,
+  buildTakeaways,
+  CareIcon,
+  careKicker,
+  CareSection,
+  careVerdict,
+  sizeKicker,
+  SizeChips,
+  sizeTitle,
+  storyCareLines,
+  ValueCard,
+} from "@/components/ResultParts";
+import { formatPriceLabel } from "@/domain/pricing";
+import type { AnalysisResult, PreferenceMatch } from "@/types/shopping";
 
 // The left visual follows the section being read. Order matches the page, top to bottom.
 type Story = "match" | "size" | "material" | "preference" | "care";
@@ -49,12 +61,8 @@ export function ResultStage({
     return () => observer.disconnect();
   }, []);
 
-  const materialTakeaways = [
-    { label: "Warmth", value: traitToLabel(result.material.traits.warmth), icon: Shirt },
-    { label: "Touch", value: traitToLabel(result.material.traits.softness), icon: Heart },
-    { label: "Care", value: traitToLabel(result.material.traits.careEase), icon: WashingMachine },
-    { label: "Pilling", value: traitToLabel(result.material.traits.pillingRisk, true), icon: ShieldCheck },
-  ];
+  const materialTakeaways = buildTakeaways(result);
+  const lowSize = result.size.confidence === "low";
 
   return (
     <article className="result-stage" ref={articleRef}>
@@ -82,16 +90,10 @@ export function ResultStage({
 
         <div className="story-layer" data-layer="size" data-on={story === "size"} aria-hidden={story !== "size"}>
           <div className="story-panel">
-            <p className="story-kicker">추천 사이즈</p>
+            <p className="story-kicker">{sizeKicker(result.size)}</p>
             <p className="story-big">{result.size.recommendedSize ?? "?"}</p>
-            <p className="story-line">신뢰도 {confidenceLabel(result.size.confidence)}</p>
-            {result.size.alternatives.length > 0 && (
-              <div className="story-chips">
-                {result.size.alternatives.map((size) => (
-                  <span key={size}>대안 {size}</span>
-                ))}
-              </div>
-            )}
+            <p className="story-line">{lowSize ? "현재 정보만으로는 확정하기 어려워요" : `신뢰도 ${confidenceLabel(result.size.confidence)}`}</p>
+            <SizeChips size={result.size} className="story-chips" />
           </div>
         </div>
 
@@ -139,20 +141,14 @@ export function ResultStage({
 
         <div className="story-layer" data-layer="care" data-on={story === "care"} aria-hidden={story !== "care"}>
           <div className="story-panel">
-            <p className="story-kicker">{result.care.source === "product_page" ? "제조사 안내" : "소재로 예상한 관리"}</p>
+            <p className="story-kicker">{result.care.manufacturer?.length ? "상품 페이지 안내" : result.care.manufacturer ? "소재 특성 기반 권장" : result.care.source === "product_page" ? "제조사 안내" : "소재로 예상한 관리"}</p>
             <ul className="story-care">
-              <li style={{ "--i": 0 } as CSSProperties}>
-                <WashingMachine size={20} aria-hidden="true" />
-                <span>{result.care.washing}</span>
-              </li>
-              <li style={{ "--i": 1 } as CSSProperties}>
-                <Wind size={20} aria-hidden="true" />
-                <span>{result.care.drying}</span>
-              </li>
-              <li style={{ "--i": 2 } as CSSProperties}>
-                <Archive size={20} aria-hidden="true" />
-                <span>{result.care.storage}</span>
-              </li>
+              {storyCareLines(result.care).map((line, index) => (
+                <li key={`${line.kind}-${line.text}`} style={{ "--i": index } as CSSProperties}>
+                  <CareIcon kind={line.kind} />
+                  <span>{line.text}</span>
+                </li>
+              ))}
             </ul>
           </div>
         </div>
@@ -167,7 +163,7 @@ export function ResultStage({
           <div className="strip-meta">
             <span>{sourceLabel(result.product.factsSource)}</span>
             <span>{metadataLabel(result)}</span>
-            {pricing && <span>현재가 {formatPrice(pricing.currentPrice, pricing.currency)}</span>}
+            {pricing && <span>현재가 {formatPriceLabel(pricing.currentPrice, pricing.currency)}</span>}
           </div>
         </section>
 
@@ -192,14 +188,12 @@ export function ResultStage({
           ))}
         </section>
 
-        <EditorialSection story="size" label="SIZE" title={result.size.recommendedSize ?? "미확인"} kicker="추천 사이즈">
+        <EditorialSection story="size" label="SIZE" title={sizeTitle(result.size)} kicker={sizeKicker(result.size)}>
           <p>{result.size.reason}</p>
           <p className="source-note">{sizeProvenance(result)}</p>
           <div className="inline-cluster">
             <span>신뢰도 {confidenceLabel(result.size.confidence)}</span>
-            {result.size.alternatives.map((size) => (
-              <span key={size}>대안 {size}</span>
-            ))}
+            <SizeChips size={result.size} />
           </div>
           {(result.size.confidence === "low" || result.size.confidence === "unavailable") && (
             <button onClick={onEditProfile} className="quiet-button">
@@ -268,25 +262,8 @@ export function ResultStage({
           )}
         </EditorialSection>
 
-        <EditorialSection story="care" label="CARE" title="입고 관리하기" kicker={result.care.source === "product_page" ? "상품 안내 기준" : "소재 기반 추정"}>
-          <div className="care-script">
-            <p>
-              <strong>세탁</strong>
-              {result.care.washing}
-            </p>
-            <p>
-              <strong>건조</strong>
-              {result.care.drying}
-            </p>
-            <p>
-              <strong>보관</strong>
-              {result.care.storage}
-            </p>
-            <p>
-              <strong>주의</strong>
-              {result.care.cautions.join(" ") || "제조사 라벨을 한 번 더 확인하세요."}
-            </p>
-          </div>
+        <EditorialSection story="care" label="CARE" title="입고 관리하기" kicker={careKicker(result.care)}>
+          <CareSection care={result.care} />
         </EditorialSection>
 
         <EvidenceSection result={result} />
@@ -322,47 +299,6 @@ function EvidenceSection({ result }: { result: AnalysisResult }) {
         ))}
       </div>
     </section>
-  );
-}
-
-/** 현재 판매가, 정가, 가격 대비 구성. It is a reference estimate, so it never reads as a verdict. */
-function ValueCard({ value }: { value?: ValueEvaluation }) {
-  if (!value) return null;
-  const pricing = value.pricing;
-
-  return (
-    <div className="value-card" data-status={value.status}>
-      <div className="value-head">
-        <span className="value-eyebrow">가격 대비 구성</span>
-        <strong className="value-label">{value.label}</strong>
-      </div>
-
-      {pricing ? (
-        <div className="value-price">
-          <div>
-            <span className="value-key">현재 판매가</span>
-            <RollingNumber text={formatPrice(pricing.currentPrice, pricing.currency)} className="price-number" />
-          </div>
-          {pricing.originalPrice !== undefined && (
-            <div className="value-original">
-              <span className="value-key">정가</span>
-              <s>{formatPrice(pricing.originalPrice, pricing.currency)}</s>
-              {pricing.discountRate !== undefined && <em>{pricing.discountRate}% 할인</em>}
-            </div>
-          )}
-        </div>
-      ) : (
-        <p className="value-price-missing">상품 페이지에서 가격을 확인하지 못했어요.</p>
-      )}
-
-      <p className="value-summary">{value.summary}</p>
-      {value.status === "available" && value.expectedPrice !== undefined && pricing && (
-        <p className="value-reference">
-          비슷한 소재 구성의 참고 가격대는 약 {formatPrice(value.expectedPrice, pricing.currency)}예요.
-        </p>
-      )}
-      <p className="value-caveat">{value.caveat}</p>
-    </div>
   );
 }
 
@@ -412,26 +348,18 @@ function signalSummary(counts: ReturnType<typeof countRatings>) {
   return parts.join(" · ");
 }
 
-function basisLabel(basis: MetricBasis | undefined, confidence: PreferenceMatch["confidence"]) {
-  const base =
-    basis === "product_page"
-      ? "상품 페이지에서 확인한 정보 기준이에요."
-      : basis === "price_and_material"
-        ? "현재 가격과 소재 구성을 함께 본 참고 평가예요."
-        : "소재 특성을 기반으로 예상한 평가예요.";
-  return confidence === "low" ? `${base} 정보가 일부 부족해 참고용으로 봐 주세요.` : base;
-}
-
 function buildTopInsights(result: AnalysisResult) {
   const warmScore = result.metrics?.warmth;
   const warm = warmScore ? warmScore.available && warmScore.score >= 68 : result.material.traits.warmth >= 4;
   const sizeOk = result.size.confidence === "high" || result.size.confidence === "medium";
   const care = result.score.components.careCompatibility;
   const careEasy = care !== null && care >= 70;
+  const verdict = careVerdict(result.care);
   return [
     { icon: Shirt, text: warm ? "보온성이 좋은 편이에요" : "보온성은 보통 수준이에요" },
     { icon: Ruler, text: sizeOk ? "사이즈 근거가 비교적 충분해요" : "사이즈 신뢰도는 낮게 봤어요" },
-    { icon: WashingMachine, text: careEasy ? "관리 난도는 무난해요" : "관리에 조금 신경 써야 해요" },
+    // The same dryer and washing verdicts the care section and the preference list show.
+    { icon: WashingMachine, text: careEasy ? "관리 난도는 무난해요" : `관리에 조금 신경 써야 해요${verdict.length ? ` (${verdict[0]})` : ""}` },
   ] as const;
 }
 

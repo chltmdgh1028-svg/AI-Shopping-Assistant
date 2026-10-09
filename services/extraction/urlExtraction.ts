@@ -4,7 +4,7 @@ import {
   type ExtractionErrorCode,
   type ProductExtractionProvider,
 } from "@/services/extraction/aiProvider";
-import { buildPricing, formatPrice } from "@/domain/pricing";
+import { applyBundle, buildPricing, formatPrice } from "@/domain/pricing";
 import { extractProductFromHtml, extractVisibleText } from "@/services/extraction/htmlExtraction";
 import { fetchPublicHtml, type SafeFetchResult } from "@/services/extraction/safeFetch";
 import type { ProductFacts } from "@/types/shopping";
@@ -81,7 +81,9 @@ export async function extractProductFromUrl(
   const hasSizes = product.sizes.length > 0;
   product.extractionMetadata = { ...metadata, status: hasMaterials && hasSizes ? "complete" : hasMaterials || hasSizes ? "partial" : "failed" };
 
-  const partial = product.extractionMetadata.status !== "complete" || product.extractionMetadata.warnings.length > 0;
+  product.pricing = applyBundle(product.pricing, product.productName, pageText);
+
+    const partial = product.extractionMetadata.status !== "complete" || product.extractionMetadata.warnings.length > 0;
   return { ok: true, product, partial };
 }
 
