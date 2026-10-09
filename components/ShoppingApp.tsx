@@ -250,6 +250,7 @@ function HomeStage(props: {
         </div>
 
         <div className="hero-facts" aria-label="분석 예시">
+          <p className="facts-caption">샘플 상품으로 본 분석 예시</p>
           {heroFacts.map(([label, value]) => (
             <div key={label} className="hero-fact">
               <span>{label}</span>
