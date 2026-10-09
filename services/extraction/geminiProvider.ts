@@ -94,6 +94,9 @@ function createSdkGenerator(config: GeminiConfig): GenerateJson {
         responseMimeType: "application/json",
         responseJsonSchema: geminiResponseJsonSchema,
         abortSignal: signal,
+        // The SDK retries 429/5xx with backoff by default. Inside our 20s budget that turns a quota error
+        // into a silent timeout, so we make one attempt and report the real failure class instead.
+        httpOptions: { retryOptions: { attempts: 1 } },
       },
     });
     return response.text;
@@ -102,9 +105,13 @@ function createSdkGenerator(config: GeminiConfig): GenerateJson {
 
 function toProviderError(error: unknown, aborted: boolean): ExtractionProviderError {
   if (error instanceof ExtractionProviderError) return error;
-  if (aborted) return new ExtractionProviderError("timeout");
 
   const status = error instanceof ApiError ? error.status : (error as { status?: number } | null)?.status;
+  if (aborted) {
+    // Only the class of failure is logged: provider messages can echo request details.
+    console.error("Gemini extraction timed out", { status: status ?? "none" });
+    return new ExtractionProviderError("timeout");
+  }
   if (status === 429) return new ExtractionProviderError("quota");
   if (status === 401 || status === 403) return new ExtractionProviderError("auth");
   if (status === 404) return new ExtractionProviderError("model");
