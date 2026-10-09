@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { ExtractionProviderError } from "@/services/extraction/aiProvider";
 import { GeminiProductExtractionProvider, type GenerateJson } from "@/services/extraction/geminiProvider";
 
-const config = { apiKey: "test-key-not-real", model: "gemini-test-model" };
+const config = { apiKey: "test-key-not-real", models: ["model-a", "model-b", "model-c"] };
 const pageText = "울 니트 Wool 70% Nylon 30% 사이즈 M 가슴 100 총장 64";
 
 const goodResponse = JSON.stringify({
@@ -23,8 +23,8 @@ const goodResponse = JSON.stringify({
   extractionConfidence: "high",
 });
 
-function providerWith(generate: GenerateJson, timeoutMs?: number) {
-  return new GeminiProductExtractionProvider(config, generate, timeoutMs);
+function providerWith(generate: GenerateJson, timeoutMs?: number, totalMs?: number) {
+  return new GeminiProductExtractionProvider(config, generate, timeoutMs, totalMs);
 }
 
 const input = { url: "https://shop.example.com/knit", pageText };
@@ -82,8 +82,9 @@ describe("GeminiProductExtractionProvider", () => {
     const auth = Object.assign(new Error("API key not valid SECRET-123"), { status: 403 });
     const model = Object.assign(new Error("model not found"), { status: 404 });
     const boom = Object.assign(new Error("boom SECRET-123"), { status: 500 });
-    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const spy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
+    // The chain is exhausted for quota/model/5xx, so the last error is reported.
     for (const [error, code] of [
       [quota, "quota"],
       [auth, "auth"],
@@ -117,5 +118,105 @@ describe("GeminiProductExtractionProvider", () => {
 
     await expect(providerWith(slow, 20).extract(input)).rejects.toMatchObject({ code: "timeout" });
     expect(aborted).toBe(true);
+  });
+
+  describe("model fallback chain", () => {
+    const err = (status: number, message = "x") => Object.assign(new Error(message), { status });
+    const quiet = () => vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    function scripted(outcomes: Array<string | Error>) {
+      const tried: string[] = [];
+      const generate: GenerateJson = async ({ model }) => {
+        tried.push(model);
+        const next = outcomes[tried.length - 1];
+        if (next instanceof Error) throw next;
+        return next;
+      };
+      return { tried, generate };
+    }
+
+    it("answers from the first model and records it", async () => {
+      const { tried, generate } = scripted([goodResponse]);
+      const result = await providerWith(generate).extract(input);
+      expect(tried).toEqual(["model-a"]);
+      expect(result.model).toBe("model-a");
+    });
+
+    it.each([
+      ["rate limit", err(429)],
+      ["unknown model", err(404)],
+      ["5xx", err(503)],
+      ["network error without a status", new Error("fetch failed")],
+      ["model access denied", err(403, "permission denied for model")],
+    ])("falls back to the next model on %s", async (_name, failure) => {
+      const spy = quiet();
+      const { tried, generate } = scripted([failure, goodResponse]);
+      const result = await providerWith(generate).extract(input);
+      expect(tried).toEqual(["model-a", "model-b"]);
+      expect(result.model).toBe("model-b");
+      spy.mockRestore();
+    });
+
+    it("falls back when a model times out", async () => {
+      const spy = quiet();
+      const tried: string[] = [];
+      const generate: GenerateJson = ({ model, signal }) => {
+        tried.push(model);
+        if (model !== "model-a") return Promise.resolve(goodResponse);
+        return new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(new Error("aborted"))));
+      };
+      const result = await providerWith(generate, 20).extract(input);
+      expect(tried).toEqual(["model-a", "model-b"]);
+      expect(result.model).toBe("model-b");
+      spy.mockRestore();
+    });
+
+    it.each([
+      ["an invalid API key (400)", err(400, "API key not valid. Please pass a valid API key."), "auth"],
+      ["an invalid API key (403)", err(403, "Your API key was reported as leaked"), "auth"],
+      ["a rejected key (401)", err(401), "auth"],
+      ["a malformed request (400)", err(400, "Invalid JSON payload"), "upstream"],
+    ])("stops without trying other models on %s", async (_name, failure, code) => {
+      const spy = quiet();
+      const { tried, generate } = scripted([failure, goodResponse]);
+      await expect(providerWith(generate).extract(input)).rejects.toMatchObject({ code });
+      expect(tried).toEqual(["model-a"]);
+      spy.mockRestore();
+    });
+
+    it("does not fall back on unusable output", async () => {
+      const { tried, generate } = scripted(["not json at all", goodResponse]);
+      await expect(providerWith(generate).extract(input)).rejects.toMatchObject({ code: "invalid_output" });
+      expect(tried).toEqual(["model-a"]);
+    });
+
+    it("tries each model exactly once and reports the last failure when all are unavailable", async () => {
+      const spy = quiet();
+      const { tried, generate } = scripted([err(429), err(404), err(503)]);
+      await expect(providerWith(generate).extract(input)).rejects.toMatchObject({ code: "upstream" });
+      expect(tried).toEqual(["model-a", "model-b", "model-c"]);
+      spy.mockRestore();
+    });
+
+    it("stops starting new models once the total budget is spent", async () => {
+      const spy = quiet();
+      const tried: string[] = [];
+      const generate: GenerateJson = ({ model, signal }) => {
+        tried.push(model);
+        return new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(new Error("aborted"))));
+      };
+      // 1.6s budget with 1.5s minimum per attempt: one attempt fits, a second does not.
+      await expect(providerWith(generate, 1_550, 1_600).extract(input)).rejects.toMatchObject({ code: "timeout" });
+      expect(tried).toEqual(["model-a"]);
+      spy.mockRestore();
+    });
+
+    it("logs the model and status class only, never provider messages", async () => {
+      const spy = quiet();
+      const { generate } = scripted([err(429, "RESOURCE_EXHAUSTED SECRET-123"), goodResponse]);
+      await providerWith(generate).extract(input);
+      expect(spy.mock.calls[0]).toEqual(["Gemini model skipped", { model: "model-a", code: "quota", status: 429 }]);
+      spy.mockRestore();
+    });
   });
 });

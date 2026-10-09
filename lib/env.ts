@@ -12,7 +12,23 @@
  */
 export const DEFAULT_GEMINI_MODEL = "gemini-3.5-flash-lite";
 
-export type GeminiConfig = { apiKey: string; model: string };
+/**
+ * Availability-ordered fallback chain, used after the primary model fails with a rate limit, quota,
+ * unavailable-model or 5xx error. Every id was listed on Google's models page in October 2026;
+ * `gemini-3.1-flash` and a bare `gemini-3-flash` do not exist as text models (the latter is only
+ * published as `gemini-3-flash-preview`). The 2.5 models are limited to accounts that used them
+ * before, so they sit last and simply 404 for everyone else.
+ */
+export const GEMINI_FALLBACK_MODELS = [
+  "gemini-3.1-flash-lite",
+  "gemini-3.5-flash",
+  "gemini-3.8-flash",
+  "gemini-3-flash-preview",
+  "gemini-2.5-flash-lite",
+  "gemini-2.5-flash",
+] as const;
+
+export type GeminiConfig = { apiKey: string; models: string[] };
 
 export type GeminiConfigResult =
   | { ok: true; config: GeminiConfig }
@@ -26,8 +42,10 @@ export function getGeminiConfig(env: Record<string, string | undefined> = proces
 
   // "models/gemini-..." is the API resource name; accept it but store the bare id.
   const requested = env.GEMINI_MODEL?.trim().replace(/^models\//, "");
-  const model = requested || DEFAULT_GEMINI_MODEL;
-  if (!modelPattern.test(model)) return { ok: false, reason: "invalid_model" };
+  const primary = requested || DEFAULT_GEMINI_MODEL;
+  if (!modelPattern.test(primary)) return { ok: false, reason: "invalid_model" };
 
-  return { ok: true, config: { apiKey, model } };
+  // GEMINI_MODEL only chooses the first model; the rest of the chain always follows it.
+  const models = [...new Set([primary, DEFAULT_GEMINI_MODEL, ...GEMINI_FALLBACK_MODELS])];
+  return { ok: true, config: { apiKey, models } };
 }

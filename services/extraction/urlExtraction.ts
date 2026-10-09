@@ -56,6 +56,7 @@ export async function extractProductFromUrl(
         confidence: ai.confidence,
         aiProvider: aiProvider.providerName,
         aiStatus: "used",
+        aiModel: ai.model,
         warnings: [...buildWarnings(product, hasStructuredData), ...ai.warnings],
       };
     } catch (error) {

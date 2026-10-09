@@ -19,6 +19,8 @@ export type AiExtractionResult = {
   product: Partial<ProductFacts>;
   confidence: "high" | "medium" | "low";
   warnings: string[];
+  /** The model that actually answered; recorded in metadata, not shown in the UI. */
+  model?: string;
 };
 
 export type ExtractionErrorCode = "auth" | "quota" | "model" | "timeout" | "invalid_output" | "upstream";

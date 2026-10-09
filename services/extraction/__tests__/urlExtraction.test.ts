@@ -30,6 +30,7 @@ const geminiLike = (overrides: Partial<ProductExtractionProvider> = {}): Product
     },
     confidence: "high",
     warnings: [],
+    model: "gemini-3.1-flash-lite",
   }),
   ...overrides,
 });
@@ -76,7 +77,7 @@ describe("extractProductFromUrl", () => {
     expect(result.product.materials).toEqual([{ name: "Wool", percentage: 80, source: "gemini-extracted", confidence: "high" }]);
     expect(result.product.sizes).toHaveLength(1);
     expect(result.product.careInstructions).toEqual(["세탁: 찬물 손세탁"]);
-    expect(result.product.extractionMetadata).toMatchObject({ aiProvider: "gemini", aiStatus: "used", status: "complete" });
+    expect(result.product.extractionMetadata).toMatchObject({ aiProvider: "gemini", aiStatus: "used", aiModel: "gemini-3.1-flash-lite", status: "complete" });
     expect(result.product.extractionMetadata?.strategy).toContain("ai-adapter");
   });
 

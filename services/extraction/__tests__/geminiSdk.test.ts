@@ -33,7 +33,7 @@ describe("Gemini SDK call", () => {
   });
 
   it("uses the configured key and model, structured JSON output, and a single attempt", async () => {
-    const provider = new GeminiProductExtractionProvider({ apiKey: "test-key-not-real", model: "gemini-test-model" });
+    const provider = new GeminiProductExtractionProvider({ apiKey: "test-key-not-real", models: ["gemini-test-model"] });
     await provider.extract({ url: "https://shop.example.com/a", pageText: "Wool 60%" });
 
     expect(calls).toHaveLength(1);
@@ -50,7 +50,7 @@ describe("Gemini SDK call", () => {
   });
 
   it("never puts the key in the prompt sent to the model", async () => {
-    const provider = new GeminiProductExtractionProvider({ apiKey: "test-key-not-real", model: "gemini-test-model" });
+    const provider = new GeminiProductExtractionProvider({ apiKey: "test-key-not-real", models: ["gemini-test-model"] });
     await provider.extract({ url: "https://shop.example.com/a", pageText: "Wool 60%" });
     expect(JSON.stringify(calls[0].request)).not.toContain("test-key-not-real");
   });

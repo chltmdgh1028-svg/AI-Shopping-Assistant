@@ -126,6 +126,7 @@ export type ProductFacts = {
     aiProvider: "unavailable" | "mock" | "gemini";
     // used: Gemini structured the page. not_configured: no API key. failed: Gemini was tried and errored.
     aiStatus?: "used" | "not_configured" | "failed";
+    aiModel?: string;
     warnings: string[];
     fetchedAt?: string;
   };
