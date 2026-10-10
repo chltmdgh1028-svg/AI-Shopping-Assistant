@@ -4,7 +4,7 @@ import type { Session, User } from "@supabase/supabase-js";
 import { STORAGE_SCHEMA_VERSION } from "@/domain/preferenceMigration";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { getSupabaseBrowserEnv } from "@/lib/supabase/env";
-import { localShoppingRepository, readJson, schemaKey, writeJson } from "@/repository/localShoppingRepository";
+import { archiveShoppingCache, cacheOwnerKey, clearShoppingCache, localShoppingRepository, readJson, schemaKey, writeJson } from "@/repository/localShoppingRepository";
 import type { AnalysisResult, UserPreference, UserProfile } from "@/types/shopping";
 
 const migrationKey = (userId: string) => `shopping-assistant:supabase-migrated:${userId}`;
@@ -28,6 +28,28 @@ export type CloudState = {
   error?: string;
 };
 
+export type AuthFlowDiagnostics = {
+  message?: string;
+  code?: string;
+  status?: number;
+  name?: string;
+  hasSession: boolean;
+  userId?: string;
+  isAnonymous?: boolean;
+  providers: string[];
+  currentProvider?: string;
+};
+
+export class AuthFlowError extends Error {
+  diagnostics: AuthFlowDiagnostics;
+
+  constructor(message: string, diagnostics: AuthFlowDiagnostics) {
+    super(message);
+    this.name = "AuthFlowError";
+    this.diagnostics = diagnostics;
+  }
+}
+
 export type RemoteShoppingSnapshot = {
   profile: UserProfile | null;
   preferences: UserPreference[] | null;
@@ -50,10 +72,11 @@ export function getLocalSnapshot(): RemoteShoppingSnapshot {
   };
 }
 
-export function cacheSnapshot(snapshot: RemoteShoppingSnapshot) {
+export function cacheSnapshot(snapshot: RemoteShoppingSnapshot, ownerId?: string) {
   if (snapshot.profile) localShoppingRepository.saveProfile(snapshot.profile);
   if (snapshot.preferences) localShoppingRepository.savePreferences(snapshot.preferences);
   localShoppingRepository.setHistory(snapshot.history.slice(0, maxHistory));
+  if (ownerId) writeJson(cacheOwnerKey, ownerId);
 }
 
 export async function ensureSupabaseSession() {
@@ -102,6 +125,8 @@ export async function loadRemoteSnapshot(): Promise<RemoteShoppingSnapshot> {
 export async function migrateLocalSnapshotIfNeeded(userId: string, remote: RemoteShoppingSnapshot) {
   const alreadyMigrated = readJson<boolean>(migrationKey(userId), false);
   if (alreadyMigrated) return false;
+  const cacheOwner = readJson<string | null>(cacheOwnerKey, null);
+  if (cacheOwner && cacheOwner !== userId) return false;
 
   const local = getLocalSnapshot();
   await saveRemoteSnapshot({
@@ -155,7 +180,8 @@ export async function saveRemoteAnalysis(result: AnalysisResult) {
 export async function deleteRemoteAnalysis(id: string) {
   const supabase = createSupabaseBrowserClient();
   if (!supabase) return;
-  const { error } = await supabase.from("analysis_history").delete().eq("id", id);
+  const userId = await requireUserId();
+  const { error } = await supabase.from("analysis_history").delete().eq("user_id", userId).eq("id", id);
   if (error) throw error;
 }
 
@@ -171,22 +197,44 @@ export async function saveRemoteSnapshot(snapshot: RemoteShoppingSnapshot) {
 export async function linkKakaoIdentity() {
   const supabase = createSupabaseBrowserClient();
   if (!supabase) throw new Error("Supabase is not configured.");
-  await ensureSupabaseSession();
-  const { error } = await supabase.auth.linkIdentity({
+  const session = await ensureSupabaseSession();
+  const user = session?.user;
+  if (!user) throw new AuthFlowError("Supabase session is not available.", diagnosticsFromUser(null));
+
+  const before = diagnosticsFromUser(user);
+  if (!user.is_anonymous) {
+    throw new AuthFlowError("이미 Kakao 계정으로 보관 중입니다.", before);
+  }
+
+  const { data, error } = await supabase.auth.linkIdentity({
     provider: "kakao",
-    options: { redirectTo: `${window.location.origin}/auth/callback`, scopes: kakaoProfileScope },
+    options: { redirectTo: `${window.location.origin}/auth/callback`, scopes: kakaoProfileScope, skipBrowserRedirect: true },
   });
-  if (error) throw error;
+  if (error) throw toAuthFlowError("Kakao identity linking URL을 만들지 못했습니다.", error, before);
+  if (!data.url) throw new AuthFlowError("Kakao identity linking URL이 비어 있습니다.", before);
+  window.location.assign(data.url);
 }
 
 export async function signInWithKakao() {
   const supabase = createSupabaseBrowserClient();
   if (!supabase) throw new Error("Supabase is not configured.");
-  await supabase.auth.signOut({ scope: "local" });
-  const { error } = await supabase.auth.signInWithOAuth({
+  await archiveAndClearCurrentCache();
+  const signedOut = await supabase.auth.signOut({ scope: "local" });
+  if (signedOut.error) throw signedOut.error;
+  const { data, error } = await supabase.auth.signInWithOAuth({
     provider: "kakao",
-    options: { redirectTo: `${window.location.origin}/auth/callback`, scopes: kakaoProfileScope },
+    options: { redirectTo: `${window.location.origin}/auth/callback`, scopes: kakaoProfileScope, skipBrowserRedirect: true },
   });
+  if (error) throw error;
+  if (!data.url) throw new Error("Kakao login URL is empty.");
+  window.location.assign(data.url);
+}
+
+export async function signOutOfSupabase() {
+  const supabase = createSupabaseBrowserClient();
+  if (!supabase) return;
+  await archiveAndClearCurrentCache();
+  const { error } = await supabase.auth.signOut();
   if (error) throw error;
 }
 
@@ -206,6 +254,12 @@ async function requireUserId() {
   return userId;
 }
 
+async function archiveAndClearCurrentCache() {
+  const identity = await getCloudIdentity();
+  if (identity?.userId) archiveShoppingCache(identity.userId);
+  clearShoppingCache();
+}
+
 function identityFromUser(user: User): CloudIdentity {
   const metadata = user.user_metadata ?? {};
   const identities = user.identities ?? [];
@@ -217,6 +271,29 @@ function identityFromUser(user: User): CloudIdentity {
     avatarUrl: stringMetadata(metadata.avatar_url) ?? stringMetadata(metadata.picture),
     provider,
   };
+}
+
+function diagnosticsFromUser(user: User | null, error?: unknown): AuthFlowDiagnostics {
+  const identities = user?.identities ?? [];
+  const providers = identities.map((identity) => identity.provider).filter(Boolean);
+  const authError = error && typeof error === "object" ? (error as { message?: unknown; code?: unknown; status?: unknown; name?: unknown }) : null;
+  return {
+    message: typeof authError?.message === "string" ? authError.message : undefined,
+    code: typeof authError?.code === "string" ? authError.code : undefined,
+    status: typeof authError?.status === "number" ? authError.status : undefined,
+    name: typeof authError?.name === "string" ? authError.name : undefined,
+    hasSession: Boolean(user),
+    userId: user?.id,
+    isAnonymous: user?.is_anonymous,
+    providers,
+    currentProvider: providers.find((provider) => provider !== "anonymous") ?? providers[0],
+  };
+}
+
+function toAuthFlowError(message: string, error: unknown, sessionDiagnostics: AuthFlowDiagnostics) {
+  const diagnostics = { ...sessionDiagnostics, ...diagnosticsFromUser(null, error), hasSession: sessionDiagnostics.hasSession, userId: sessionDiagnostics.userId, isAnonymous: sessionDiagnostics.isAnonymous, providers: sessionDiagnostics.providers, currentProvider: sessionDiagnostics.currentProvider };
+  console.warn("Kakao linkIdentity failed", diagnostics);
+  return new AuthFlowError(message, diagnostics);
 }
 
 function stringMetadata(value: unknown) {

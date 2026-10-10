@@ -5,6 +5,7 @@ export const profileKey = "shopping-assistant:profile";
 export const preferencesKey = "shopping-assistant:preferences";
 export const historyKey = "shopping-assistant:history";
 export const schemaKey = "shopping-assistant:schema";
+export const cacheOwnerKey = "shopping-assistant:cache-owner";
 
 export const defaultPreferences: UserPreference[] = [
   { id: "warmth", weight: 2 },
@@ -39,6 +40,35 @@ export function readJson<T>(key: string, fallback: T): T {
 export function writeJson<T>(key: string, value: T) {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(key, JSON.stringify(value));
+}
+
+export function removeJson(key: string) {
+  if (typeof window === "undefined") return;
+  window.localStorage.removeItem(key);
+}
+
+export function hasStoredShoppingData() {
+  if (typeof window === "undefined") return false;
+  return Boolean(window.localStorage.getItem(profileKey) || window.localStorage.getItem(preferencesKey) || window.localStorage.getItem(historyKey));
+}
+
+export function clearShoppingCache() {
+  removeJson(profileKey);
+  removeJson(preferencesKey);
+  removeJson(historyKey);
+  removeJson(schemaKey);
+  removeJson(cacheOwnerKey);
+}
+
+export function archiveShoppingCache(ownerId: string) {
+  if (!hasStoredShoppingData()) return;
+  writeJson(`shopping-assistant:archived-cache:${ownerId}`, {
+    profile: readJson<UserProfile | null>(profileKey, null),
+    preferences: readJson<UserPreference[] | null>(preferencesKey, null),
+    history: readJson<AnalysisResult[] | null>(historyKey, null),
+    schemaVersion: readJson<number | null>(schemaKey, null),
+    archivedAt: new Date().toISOString(),
+  });
 }
 
 export const localShoppingRepository: ShoppingRepository = {

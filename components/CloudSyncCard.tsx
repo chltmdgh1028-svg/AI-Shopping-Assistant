@@ -1,16 +1,18 @@
 "use client";
 
-import { Cloud, Link2, LogIn, WifiOff } from "lucide-react";
+import { Cloud, Link2, LogIn, LogOut, WifiOff } from "lucide-react";
 import type { CloudState } from "@/repository/supabaseShoppingRepository";
 
 export function CloudSyncCard({
   state,
   onLinkKakao,
   onSignInKakao,
+  onSignOut,
 }: {
   state: CloudState;
   onLinkKakao: () => void;
   onSignInKakao: () => void;
+  onSignOut: () => void;
 }) {
   if (!state.available) {
     return (
@@ -39,7 +41,14 @@ export function CloudSyncCard({
               : "지금 기록은 익명 계정에 저장됩니다. Kakao를 연결하면 같은 데이터를 다른 기기에서도 불러올 수 있어요."}
         </p>
         {state.error && <p className="cloud-sync-error">{state.error}</p>}
-        {!isLinked && (
+        {isLinked ? (
+          <div className="cloud-sync-actions">
+            <button type="button" className="ghost-sync-button" onClick={onSignOut} disabled={state.loading}>
+              <LogOut size={16} aria-hidden="true" />
+              로그아웃
+            </button>
+          </div>
+        ) : (
           <div className="cloud-sync-actions">
             <button type="button" className="kakao-button" onClick={onLinkKakao} disabled={state.loading}>
               <Link2 size={16} aria-hidden="true" />

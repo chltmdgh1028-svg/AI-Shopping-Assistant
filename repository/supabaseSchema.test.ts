@@ -26,4 +26,14 @@ describe("Supabase storage schema", () => {
       expect(migration).toContain("with check ((select auth.uid()) = user_id)");
     }
   });
+
+  it("grants CRUD only to the authenticated role", () => {
+    const grants = readFileSync(join(process.cwd(), "supabase/migrations/20261010143000_authenticated_table_grants.sql"), "utf8");
+    expect(grants).toContain("grant usage on schema public to authenticated");
+    for (const table of ["profiles", "preferences", "analysis_history"]) {
+      expect(grants).toContain(`on table public.${table}`);
+      expect(grants).toContain("to authenticated");
+    }
+    expect(grants).not.toContain("to anon");
+  });
 });

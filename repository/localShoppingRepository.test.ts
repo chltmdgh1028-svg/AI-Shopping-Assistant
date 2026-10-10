@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { demoProduct } from "@/data/demoProduct";
-import { localShoppingRepository as repository } from "@/repository/localShoppingRepository";
+import { archiveShoppingCache, cacheOwnerKey, clearShoppingCache, localShoppingRepository as repository } from "@/repository/localShoppingRepository";
 import type { AnalysisResult, UserPreference, UserProfile } from "@/types/shopping";
 
 const record = (id: string): AnalysisResult =>
@@ -44,5 +44,28 @@ describe("deleting a history record", () => {
     expect(repository.deleteAnalysis("missing").map((item) => item.id)).toEqual(["only"]);
     expect(repository.deleteAnalysis("only")).toEqual([]);
     expect(repository.getHistory()).toEqual([]);
+  });
+});
+
+describe("cloud cache boundaries", () => {
+  it("can archive one user's cache and clear the global shopping cache before account switching", () => {
+    repository.saveProfile(profile);
+    repository.savePreferences(preferences);
+    repository.saveAnalysis(record("kakao-record"));
+    window.localStorage.setItem(cacheOwnerKey, JSON.stringify("kakao-user"));
+
+    archiveShoppingCache("kakao-user");
+    clearShoppingCache();
+
+    expect(repository.getProfile()).toBeNull();
+    expect(repository.getHistory()).toEqual([]);
+    expect(window.localStorage.getItem(cacheOwnerKey)).toBeNull();
+
+    const archived = JSON.parse(window.localStorage.getItem("shopping-assistant:archived-cache:kakao-user") ?? "{}") as {
+      profile?: UserProfile;
+      history?: AnalysisResult[];
+    };
+    expect(archived.profile).toEqual(profile);
+    expect(archived.history?.map((item) => item.id)).toEqual(["kakao-record"]);
   });
 });

@@ -26,7 +26,9 @@ import {
   saveRemotePreferences,
   saveRemoteProfile,
   signInWithKakao,
+  signOutOfSupabase,
   subscribeToAuthChanges,
+  AuthFlowError,
   type CloudState,
 } from "@/repository/supabaseShoppingRepository";
 import { analyzeProduct } from "@/services/analyzeProduct";
@@ -110,7 +112,7 @@ export function ShoppingApp() {
         const migrated = await migrateLocalSnapshotIfNeeded(identity.userId, beforeMigration);
         const remote = await loadRemoteSnapshot();
         if (cancelled) return;
-        cacheSnapshot(remote);
+        cacheSnapshot(remote, identity.userId);
         setProfile(remote.profile ?? defaultProfile);
         setPreferences(remote.preferences ?? defaultPreferences);
         setHistory(remote.history);
@@ -128,6 +130,12 @@ export function ShoppingApp() {
     };
 
     queueMicrotask(() => {
+      const params = new URLSearchParams(window.location.search);
+      const authError = params.get("auth_error");
+      if (authError) {
+        setCloud((current) => ({ ...current, loading: false, error: "Kakao 로그인 연결을 완료하지 못했어요. 다시 시도해 주세요." }));
+        window.history.replaceState(null, "", window.location.pathname);
+      }
       loadLocal();
       void loadCloud();
     });
@@ -183,6 +191,7 @@ export function ShoppingApp() {
   function saveProfile(next: UserProfile) {
     setProfile(next);
     localShoppingRepository.saveProfile(next);
+    go("home");
     saveRemoteProfile(next).catch(() => {
       setCloud((current) => ({ ...current, online: false, error: "프로필을 클라우드에 저장하지 못해 이 기기에 보관했습니다." }));
     });
@@ -200,8 +209,10 @@ export function ShoppingApp() {
   }
 
   function connectKakao() {
-    linkKakaoIdentity().catch(() => {
-      setCloud((current) => ({ ...current, error: "Kakao 연결을 시작하지 못했어요. 잠시 후 다시 시도해 주세요." }));
+    linkKakaoIdentity().catch((error: unknown) => {
+      const details = error instanceof AuthFlowError ? error.diagnostics : undefined;
+      if (details) console.warn("Kakao linkIdentity diagnostics", details);
+      setCloud((current) => ({ ...current, error: "Kakao 연결을 시작하지 못했어요. 현재 세션 상태를 확인한 뒤 다시 시도해 주세요." }));
     });
   }
 
@@ -209,6 +220,30 @@ export function ShoppingApp() {
     signInWithKakao().catch(() => {
       setCloud((current) => ({ ...current, error: "Kakao 로그인을 시작하지 못했어요. 잠시 후 다시 시도해 주세요." }));
     });
+  }
+
+  function logoutKakao() {
+    signOutOfSupabase()
+      .then(async () => {
+        setProfile(defaultProfile);
+        setPreferences(defaultPreferences);
+        setHistory([]);
+        setResult(null);
+        setCloud({ ...emptyCloudState, loading: true, identity: null, error: undefined });
+        go("home");
+        const session = await ensureSupabaseSession();
+        const identity = await getCloudIdentity(session);
+        if (!identity) throw new Error("Anonymous session was not created.");
+        const remote = await loadRemoteSnapshot();
+        cacheSnapshot(remote, identity.userId);
+        setProfile(remote.profile ?? defaultProfile);
+        setPreferences(remote.preferences ?? defaultPreferences);
+        setHistory(remote.history);
+        setCloud({ available: true, loading: false, online: true, migrated: false, identity });
+      })
+      .catch(() => {
+        setCloud((current) => ({ ...current, loading: false, error: "로그아웃을 완료하지 못했어요. 잠시 후 다시 시도해 주세요." }));
+      });
   }
 
   async function runAnalysis(origin: HTMLElement | null, input?: ProductInput) {
@@ -313,11 +348,11 @@ export function ShoppingApp() {
               onOpen={openResult}
               onDelete={deleteHistoryItem}
               onStart={() => go("home")}
-              syncCta={<CloudSyncCard state={cloud} onLinkKakao={connectKakao} onSignInKakao={loadLinkedKakao} />}
+              syncCta={<CloudSyncCard state={cloud} onLinkKakao={connectKakao} onSignInKakao={loadLinkedKakao} onSignOut={logoutKakao} />}
             />
           )}
           {view === "preferences" && <PreferencesStage selected={selectedPreferenceIds} onToggle={togglePreference} />}
-          {view === "profile" && <ProfileStage profile={profile} onSave={saveProfile} syncCta={<CloudSyncCard state={cloud} onLinkKakao={connectKakao} onSignInKakao={loadLinkedKakao} />} />}
+          {view === "profile" && <ProfileStage profile={profile} onSave={saveProfile} syncCta={<CloudSyncCard state={cloud} onLinkKakao={connectKakao} onSignInKakao={loadLinkedKakao} onSignOut={logoutKakao} />} />}
         </>
       )}
 
