@@ -23,7 +23,9 @@ import { buildVisionPrompt, mapVisionResult, visionResponseJsonSchema, visionRes
 export const GEMINI_ATTEMPT_TIMEOUT_MS = 12_000;
 export const GEMINI_TOTAL_BUDGET_MS = 28_000;
 // Reading images takes longer than reading text.
-export const GEMINI_VISION_ATTEMPT_TIMEOUT_MS = 14_000;
+export const GEMINI_VISION_ATTEMPT_TIMEOUT_MS = 30_000;
+// A vision retry on another model needs real time to finish; with less than this it would only time out too.
+const MIN_VISION_ATTEMPT_MS = 9_000;
 const MIN_ATTEMPT_MS = 1_500;
 const maxPageChars = 18_000;
 
@@ -45,6 +47,7 @@ type Job = {
   schema?: object;
   attemptTimeoutMs: number;
   totalBudgetMs: number;
+  minAttemptMs?: number;
 };
 
 /** Server-only provider: the API key never leaves this process and is never logged or returned. */
@@ -106,6 +109,7 @@ export class GeminiProductExtractionProvider implements ProductExtractionProvide
       schema: visionResponseJsonSchema,
       attemptTimeoutMs: Math.min(GEMINI_VISION_ATTEMPT_TIMEOUT_MS, input.budgetMs),
       totalBudgetMs: input.budgetMs,
+      minAttemptMs: MIN_VISION_ATTEMPT_MS,
     });
 
     const validated = visionResultSchema.safeParse(parseJson(text));
@@ -123,8 +127,9 @@ export class GeminiProductExtractionProvider implements ProductExtractionProvide
 
     for (const model of this.config.models) {
       const remaining = deadline - Date.now();
-      if (remaining < MIN_ATTEMPT_MS) break;
+      if (remaining < (job.minAttemptMs ?? MIN_ATTEMPT_MS)) break;
 
+      const startedAt = Date.now();
       try {
         const text = await this.attempt(model, job, Math.min(job.attemptTimeoutMs, remaining));
         return { text, model };
@@ -132,7 +137,7 @@ export class GeminiProductExtractionProvider implements ProductExtractionProvide
         if (!(error instanceof AttemptError)) throw error;
         last = error.failure;
         // Model ids are public; the provider's message is never logged because it can echo request details.
-        console.warn("Gemini model skipped", { model, code: error.failure.code, status: error.status ?? "none" });
+        console.warn("Gemini model skipped", { model, code: error.failure.code, status: error.status ?? "none", ms: Date.now() - startedAt, images: job.images?.length ?? 0 });
         if (!error.fallback) throw error.failure;
       }
     }
@@ -185,6 +190,7 @@ function createSdkGenerator(config: GeminiConfig): GenerateJson {
   const client = new GoogleGenAI({ apiKey: config.apiKey });
 
   return async ({ model, systemInstruction, prompt, signal, images, schema }) => {
+    const startedAt = Date.now();
     const response = await client.models.generateContent({
       model,
       // Images go first, then the instruction that says what to look for.
@@ -201,6 +207,11 @@ function createSdkGenerator(config: GeminiConfig): GenerateJson {
         httpOptions: { retryOptions: { attempts: 1 } },
       },
     });
+    // Sizes only, never content: how long the call took and how many tokens it used, to tune the vision limits.
+    const usage = response.usageMetadata;
+    if (images?.length) {
+      console.info("Gemini vision call", { model, ms: Date.now() - startedAt, images: images.length, promptTokens: usage?.promptTokenCount, outputTokens: usage?.candidatesTokenCount, thoughtTokens: usage?.thoughtsTokenCount });
+    }
     return response.text;
   };
 }

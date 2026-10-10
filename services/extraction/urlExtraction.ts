@@ -37,7 +37,7 @@ export type ExtractionOptions = {
 
 // The route allows 60s. Link resolution, the page fetch and the model chain have their own limits; this is what the
 // optional detail stages (size API, image reading) are measured against so they never push the request past it.
-export const REQUEST_BUDGET_MS = 52_000;
+export const REQUEST_BUDGET_MS = 54_000;
 
 const defaultPostJson: JsonPoster = async (url, body) => {
   const result = await fetchPublicJson(url, body);

@@ -5,7 +5,7 @@ import { demoProduct } from "@/data/demoProduct";
 import type { ProductFacts, ProductInput } from "@/types/shopping";
 
 // Slightly above the server's own limits (link resolution 6s + page fetch 8s + Gemini 28s) so the server reports first.
-const ANALYZE_REQUEST_TIMEOUT_MS = 55_000;
+const ANALYZE_REQUEST_TIMEOUT_MS = 58_000;
 
 export type ProductParser = {
   parse(input: ProductInput): Promise<ProductFacts>;

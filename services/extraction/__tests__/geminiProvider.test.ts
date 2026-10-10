@@ -215,7 +215,8 @@ describe("GeminiProductExtractionProvider", () => {
       const spy = quiet();
       const { generate } = scripted([err(429, "RESOURCE_EXHAUSTED SECRET-123"), goodResponse]);
       await providerWith(generate).extract(input);
-      expect(spy.mock.calls[0]).toEqual(["Gemini model skipped", { model: "model-a", code: "quota", status: 429 }]);
+      expect(spy.mock.calls[0]).toEqual(["Gemini model skipped", { model: "model-a", code: "quota", status: 429, ms: expect.any(Number), images: 0 }]);
+      expect(JSON.stringify(spy.mock.calls)).not.toContain("SECRET");
       spy.mockRestore();
     });
   });

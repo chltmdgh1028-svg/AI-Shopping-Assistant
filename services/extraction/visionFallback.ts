@@ -16,9 +16,9 @@ export const VISION_LIMITS = {
   fetchBudgetMs: 7_000,
   concurrency: 4,
   /** Below this much time left in the request, the model is not called at all. */
-  minBudgetMs: 9_000,
+  minBudgetMs: 14_000,
   /** Longest the model call may take. */
-  maxCallMs: 20_000,
+  maxCallMs: 38_000,
 } as const;
 
 export type ImageFetcher = (url: string, timeoutMs: number) => Promise<ImageFetchResult>;
@@ -113,7 +113,7 @@ export async function runVisionFallback(args: {
   }
 
   const budgetMs = Math.min(VISION_LIMITS.maxCallMs, args.remainingMs - (Date.now() - startedAt) - 1_500);
-  if (budgetMs < 4_000) return skipped("no_time", "시간이 부족해 상세 이미지 분석은 건너뛰었어요.");
+  if (budgetMs < 10_000) return skipped("no_time", "시간이 부족해 상세 이미지 분석은 건너뛰었어요.");
 
   let result;
   try {
