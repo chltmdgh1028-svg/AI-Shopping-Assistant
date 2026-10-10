@@ -75,6 +75,31 @@ export async function fetchPublicHtml(rawUrl: string, overrides: Partial<SafeFet
   return failure("fetch_failed", "쇼핑몰 페이지가 너무 많이 이동해서 중단했습니다.");
 }
 
+export type HopOutcome =
+  | { kind: "redirect"; location: string }
+  | { kind: "page"; html: string; finalUrl: string }
+  | FetchFailure;
+
+/**
+ * One request, no redirect following. Share-link resolution reads the redirect target itself, because it can be a
+ * custom app scheme (zigzag://...) that must never be fetched, or an address whose query string holds the real
+ * destination. The URL is validated and the connection guarded exactly as in fetchPublicHtml.
+ */
+export async function fetchHop(rawUrl: string, timeoutMs: number, overrides: Partial<SafeFetchDeps> = {}): Promise<HopOutcome> {
+  const deps = { ...defaultDeps, ...overrides };
+  const safety = deps.validateUrl(rawUrl);
+  if (!safety.ok) {
+    return {
+      ok: false,
+      code: safety.reason === "invalid_url" || safety.reason === "url_too_long" ? "invalid_url" : "blocked_url",
+      message: urlSafetyMessage(safety.reason),
+    };
+  }
+  const result = await requestOnce(safety.url, deps, timeoutMs);
+  if ("ok" in result) return result;
+  return result.kind === "redirect" ? result : { kind: "page", html: result.html, finalUrl: safety.url.toString() };
+}
+
 function failure(code: FetchFailure["code"], message: string): FetchFailure {
   return { ok: false, code, message };
 }

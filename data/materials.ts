@@ -30,6 +30,8 @@ export const fiberClassLabel: Record<FiberClass, string> = {
 
 export type MaterialKnowledge = {
   aliases: string[];
+  /** How the fiber is written in the UI when the key is not enough (acronyms). */
+  displayName?: string;
   fiberClass: FiberClass;
   extras: MaterialExtras;
   traits: Record<MaterialTrait, TraitScore>;
@@ -86,6 +88,16 @@ export const materialKnowledge: Record<string, MaterialKnowledge> = {
     cons: ["땀이 차면 답답하게 느낄 수 있어요."],
     careHints: ["고온 다림질은 피하세요."],
   },
+  pbt: {
+    aliases: ["pbt", "폴리부틸렌"],
+    displayName: "PBT",
+    fiberClass: "synthetic",
+    extras: { absorbency: 1, moistureWicking: 3, quickDry: 4, dryerSafe: 4, wrinkleResistance: 4 },
+    traits: { warmth: 2, softness: 3, breathability: 2, durability: 4, pillingRisk: 3, careEase: 4, stretch: 4, weight: 4, naturalness: 1 },
+    pros: ["탄력과 복원력을 보완해요.", "형태 유지에 도움이 돼요."],
+    cons: ["통기성은 천연 섬유보다 낮을 수 있어요."],
+    careHints: ["고온 다림질은 피하세요."],
+  },
   cashmere: {
     aliases: ["cashmere", "캐시미어"],
     fiberClass: "natural",
@@ -96,7 +108,7 @@ export const materialKnowledge: Record<string, MaterialKnowledge> = {
     careHints: ["가능하면 드라이클리닝 또는 손세탁을 권장해요."],
   },
   spandex: {
-    aliases: ["spandex", "elastane", "polyurethane", "스판", "폴리우레탄", "엘라스탄"],
+    aliases: ["spandex", "elastane", "polyurethane", "스판덱스", "스판", "폴리우레탄", "엘라스탄"],
     fiberClass: "synthetic",
     extras: { absorbency: 1, moistureWicking: 3, quickDry: 4, dryerSafe: 2, wrinkleResistance: 4 },
     traits: { warmth: 1, softness: 3, breathability: 2, durability: 3, pillingRisk: 2, careEase: 3, stretch: 5, weight: 5, naturalness: 1 },

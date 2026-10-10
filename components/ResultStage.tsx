@@ -163,6 +163,7 @@ export function ResultStage({
           <div className="strip-meta">
             <span>{sourceLabel(result.product.factsSource)}</span>
             <span>{metadataLabel(result)}</span>
+            {result.product.extractionMetadata?.resolution && <span>{resolutionLabel(result.product.extractionMetadata.resolution.provider)}</span>}
             {pricing && <span>현재가 {formatPriceLabel(pricing.currentPrice, pricing.currency)}</span>}
           </div>
         </section>
@@ -367,6 +368,10 @@ function sourceLabel(source: string) {
   if (source === "demo") return "샘플 상품";
   if (source === "manual_input") return "직접 입력 정보";
   return "상품 페이지 정보";
+}
+
+function resolutionLabel(provider: "zigzag" | "generic") {
+  return provider === "zigzag" ? "지그재그 공유 링크를 상품 페이지로 변환했어요." : "공유 링크를 상품 페이지로 변환했어요.";
 }
 
 function metadataLabel(result: AnalysisResult) {

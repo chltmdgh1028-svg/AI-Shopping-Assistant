@@ -1,19 +1,9 @@
+import { readMaterialShares } from "@/domain/materialParsing";
 import { formatPrice } from "@/domain/pricing";
 import { extractPricing } from "@/services/extraction/priceExtraction";
-import type { ExtractionConfidence, ExtractionSource, FitPreference, ProductFacts, ProductSize } from "@/types/shopping";
+import type { FitPreference, ProductFacts, ProductSize } from "@/types/shopping";
 
 type JsonRecord = Record<string, unknown>;
-
-const materialPatterns = [
-  ["Wool", /(?:wool|울|양모)\s*(\d{1,3})\s*%/i],
-  ["Nylon", /(?:nylon|나일론)\s*(\d{1,3})\s*%/i],
-  ["Acrylic", /(?:acrylic|아크릴)\s*(\d{1,3})\s*%/i],
-  ["Cotton", /(?:cotton|면|코튼)\s*(\d{1,3})\s*%/i],
-  ["Polyester", /(?:polyester|폴리에스터|폴리)\s*(\d{1,3})\s*%/i],
-  ["Cashmere", /(?:cashmere|캐시미어)\s*(\d{1,3})\s*%/i],
-  ["Linen", /(?:linen|리넨)\s*(\d{1,3})\s*%/i],
-  ["Spandex", /(?:spandex|elastane|스판덱스|폴리우레탄)\s*(\d{1,3})\s*%/i],
-] as const;
 
 export function extractProductFromHtml(html: string, sourceUrl: string): ProductFacts {
   const jsonLdProduct = extractJsonLdProducts(html)[0];
@@ -107,7 +97,7 @@ function mapJsonLdProduct(node: JsonRecord, sourceUrl: string): Partial<ProductF
     category: categorize(`${stringValue(node.category) ?? ""} ${stringValue(node.name) ?? ""}`),
     images,
     description: stringValue(node.description) || "",
-    materials: extractMaterials(`${stringValue(node.material) ?? ""} ${stringValue(node.description) ?? ""}`, "structured-data", "medium"),
+    materials: readMaterialShares(`${stringValue(node.material) ?? ""} ${stringValue(node.description) ?? ""}`, "structured-data", "medium"),
     sizes: [],
     sourceUrl,
     factsSource: "product_page",
@@ -121,7 +111,7 @@ function extractFromPageText(text: string, sourceUrl: string): ProductFacts {
     category: categorize(text),
     images: [],
     description: text.slice(0, 800),
-    materials: extractMaterials(text, "page", "low"),
+    materials: readMaterialShares(text, "page", "low"),
     sizes: extractSizes(text),
     fit: extractFit(text),
     careInstructions: text
@@ -134,14 +124,7 @@ function extractFromPageText(text: string, sourceUrl: string): ProductFacts {
   };
 }
 
-function extractMaterials(text: string, source: ExtractionSource, confidence: ExtractionConfidence) {
-  return materialPatterns.flatMap(([name, pattern]) => {
-    const match = text.match(pattern);
-    return match ? [{ name, percentage: Number(match[1]), source, confidence }] : [];
-  });
-}
-
-function extractSizes(text: string): ProductSize[] {
+export function extractSizes(text: string): ProductSize[] {
   const rows = text.matchAll(/(XS|S|M|L|XL|XXL)\s*[:/-]?\s*(?:어깨|shoulder)?\s*(\d{2,3})?.*?(?:가슴|chest|bust)\s*(\d{2,3}).*?(?:허리|waist)?\s*(\d{2,3})?.*?(?:총장|length)\s*(\d{2,3})/gi);
   return Array.from(rows).map((match) => ({
     name: match[1].toUpperCase(),
@@ -155,7 +138,7 @@ function extractSizes(text: string): ProductSize[] {
   }));
 }
 
-function extractFit(text: string): FitPreference | undefined {
+export function extractFit(text: string): FitPreference | undefined {
   if (/오버|oversized/i.test(text)) return "oversized";
   if (/여유|relaxed|loose/i.test(text)) return "relaxed";
   if (/슬림|slim/i.test(text)) return "slim";
@@ -167,7 +150,7 @@ function extractTitle(html: string) {
   return decodeHtml(html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? "").trim();
 }
 
-function categorize(text: string): ProductFacts["category"] {
+export function categorize(text: string): ProductFacts["category"] {
   if (/knit|sweater|cardigan|니트|가디건/i.test(text)) return "knitwear";
   if (/shirt|셔츠|블라우스/i.test(text)) return "shirt";
   if (/pants|trouser|jean|팬츠|바지|데님/i.test(text)) return "pants";

@@ -47,6 +47,7 @@ export function ValueCard({ value }: { value?: ValueEvaluation }) {
         <p className="value-reference">상품명에 1+1 표시가 있지만 구성 수량을 페이지에서 확인하지 못해 단품 환산은 하지 않았어요.</p>
       )}
       <p className="value-summary">{value.summary}</p>
+      {pricing?.note && <p className="value-reference">{pricing.note}</p>}
       {value.status === "available" && value.expectedPrice !== undefined && pricing && (
         <p className="value-reference">
           비슷한 소재 구성의 참고 가격대는 {unitPrice !== undefined ? "개당 " : ""}약 {formatPriceLabel(value.expectedPrice, pricing.currency)}예요.

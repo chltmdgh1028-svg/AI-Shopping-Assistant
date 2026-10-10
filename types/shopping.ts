@@ -140,13 +140,23 @@ export type ProductFacts = {
   sourceUrl?: string;
   factsSource: "product_page" | "manual_input" | "demo";
   extractionMetadata?: {
-    strategy: Array<"json-ld" | "meta" | "semantic-html" | "page-text" | "ai-adapter" | "manual" | "demo">;
+    strategy: Array<"json-ld" | "meta" | "semantic-html" | "page-text" | "hydration" | "ai-adapter" | "manual" | "demo">;
     status: "complete" | "partial" | "failed" | "mock";
     confidence: ExtractionConfidence;
     aiProvider: "unavailable" | "mock" | "gemini";
     // used: Gemini structured the page. not_configured: no API key. failed: Gemini was tried and errored.
     aiStatus?: "used" | "not_configured" | "failed";
     aiModel?: string;
+    /** Set when the pasted address was a share / short / deep link. Never holds tokens, keys or intermediate tracking URLs. */
+    resolution?: {
+      provider: "zigzag" | "generic";
+      resolutionType: "short-link" | "deep-link";
+      inputUrl: string;
+      canonicalUrl: string;
+      redirectCount: number;
+      extractedProductId?: string;
+      derivedFromId?: boolean;
+    };
     warnings: string[];
     fetchedAt?: string;
   };

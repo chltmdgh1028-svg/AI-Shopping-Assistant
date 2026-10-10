@@ -6,8 +6,8 @@ import { extractProductFromUrl, type UrlExtractionResult } from "@/services/extr
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-// fetch (8s) + Gemini (20s) + headroom.
-export const maxDuration = 40;
+// share-link resolution (6s) + page fetch (8s) + Gemini model chain (28s) + headroom.
+export const maxDuration = 60;
 
 const maxBodyBytes = MAX_URL_LENGTH + 256;
 

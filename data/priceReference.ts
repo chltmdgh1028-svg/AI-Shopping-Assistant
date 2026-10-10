@@ -15,6 +15,7 @@ export const baselinePrice: Record<string, Record<Category, number>> = {
 // Relative raw-material cost of a fiber, with polyester = 1.
 export const fiberCostFactor: Record<string, number> = {
   polyester: 1,
+  pbt: 1.2,
   acrylic: 1.1,
   nylon: 1.4,
   spandex: 1.4,

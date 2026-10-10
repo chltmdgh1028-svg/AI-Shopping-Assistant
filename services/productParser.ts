@@ -1,11 +1,11 @@
-import { materialKnowledge } from "@/data/materials";
+import { readMaterialShares } from "@/domain/materialParsing";
 import { applyBundle, formatPrice } from "@/domain/pricing";
 import { extractPricingFromText } from "@/services/extraction/priceExtraction";
 import { demoProduct } from "@/data/demoProduct";
 import type { ProductFacts, ProductInput } from "@/types/shopping";
 
-// Slightly above the server's own limits (page fetch 8s + Gemini 20s) so the server reports first.
-const ANALYZE_REQUEST_TIMEOUT_MS = 35_000;
+// Slightly above the server's own limits (link resolution 6s + page fetch 8s + Gemini 28s) so the server reports first.
+const ANALYZE_REQUEST_TIMEOUT_MS = 55_000;
 
 export type ProductParser = {
   parse(input: ProductInput): Promise<ProductFacts>;
@@ -73,17 +73,7 @@ function manualPricing(text: string, name: string) {
 
 export function parseManualText(manualText: string, sourceUrl?: string): ProductFacts {
   const lower = manualText.toLowerCase();
-  // Every fiber the app knows, by any of its names, written before or after the percentage.
-  const materials = Object.entries(materialKnowledge).flatMap(([key, knowledge]) => {
-    const names = knowledge.aliases.map((alias) => alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
-    // "Wool 60%" first. "60% Wool" only when that form is absent: in "Viscose 50% Polyester 30%" the second
-    // pattern would otherwise read the 50 as polyester's share.
-    const match = manualText.match(new RegExp(`(?:${names})\\s*(\\d{1,3})\\s*%`, "i")) ?? manualText.match(new RegExp(`(\\d{1,3})\\s*%\\s*(?:${names})`, "i"));
-    const percentage = Number(match?.[1]);
-    return match && percentage > 0
-      ? [{ name: key.charAt(0).toUpperCase() + key.slice(1), percentage, source: "user-input" as const, confidence: "medium" as const }]
-      : [];
-  });
+  const materials = readMaterialShares(manualText, "user-input", "medium");
 
   const category = lower.includes("knit") || manualText.includes("니트") ? "knitwear" : "unknown";
 
