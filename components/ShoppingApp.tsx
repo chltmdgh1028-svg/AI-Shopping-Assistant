@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AnalyzingStage, DONE_HOLD_MS, FLOOD_COVER_MS, LOADING_STEP_MS, loadingSteps, MIN_ANALYZING_MS, type AnalyzingTarget } from "@/components/AnalyzingStage";
 import { AppNav, type View } from "@/components/AppNav";
+import { CloudSyncCard } from "@/components/CloudSyncCard";
 import { EmptyJourney, type AnalysisErrorState } from "@/components/common";
 import { HistoryStage } from "@/components/HistoryStage";
 import { HomeStage } from "@/components/HomeStage";
@@ -12,6 +13,22 @@ import { ProfileStage } from "@/components/ProfileStage";
 import { ResultStage } from "@/components/ResultStage";
 import { demoProduct, demoUrl } from "@/data/demoProduct";
 import { localShoppingRepository } from "@/repository/localShoppingRepository";
+import {
+  cacheSnapshot,
+  deleteRemoteAnalysis,
+  emptyCloudState,
+  ensureSupabaseSession,
+  getCloudIdentity,
+  linkKakaoIdentity,
+  loadRemoteSnapshot,
+  migrateLocalSnapshotIfNeeded,
+  saveRemoteAnalysis,
+  saveRemotePreferences,
+  saveRemoteProfile,
+  signInWithKakao,
+  subscribeToAuthChanges,
+  type CloudState,
+} from "@/repository/supabaseShoppingRepository";
 import { analyzeProduct } from "@/services/analyzeProduct";
 import { ProductAnalysisError } from "@/services/productParser";
 import type { AnalysisResult, ProductInput, UserPreference, UserProfile } from "@/types/shopping";
@@ -57,6 +74,7 @@ export function ShoppingApp() {
   const [analysisError, setAnalysisError] = useState<AnalysisErrorState>(null);
   const [target, setTarget] = useState<AnalyzingTarget>({ kind: "sample", name: demoProduct.productName });
   const [flood, setFlood] = useState<{ x: number; y: number } | null>(null);
+  const [cloud, setCloud] = useState<CloudState>(emptyCloudState);
   const analysisInFlight = useRef(false);
 
   useEffect(() => {
@@ -69,11 +87,61 @@ export function ShoppingApp() {
   }, [isAnalyzing]);
 
   useEffect(() => {
-    queueMicrotask(() => {
+    let cancelled = false;
+
+    const loadLocal = () => {
       setProfile(localShoppingRepository.getProfile() ?? defaultProfile);
       setPreferences(localShoppingRepository.getPreferences());
       setHistory(localShoppingRepository.getHistory());
+    };
+
+    const loadCloud = async () => {
+      if (!emptyCloudState.available) {
+        setCloud({ ...emptyCloudState, loading: false });
+        return;
+      }
+
+      setCloud((current) => ({ ...current, loading: true }));
+      try {
+        const session = await ensureSupabaseSession();
+        const identity = await getCloudIdentity(session);
+        if (!identity) throw new Error("Supabase session is not available.");
+        const beforeMigration = await loadRemoteSnapshot();
+        const migrated = await migrateLocalSnapshotIfNeeded(identity.userId, beforeMigration);
+        const remote = await loadRemoteSnapshot();
+        if (cancelled) return;
+        cacheSnapshot(remote);
+        setProfile(remote.profile ?? defaultProfile);
+        setPreferences(remote.preferences ?? defaultPreferences);
+        setHistory(remote.history);
+        setCloud({ available: true, loading: false, online: true, migrated, identity });
+      } catch {
+        if (cancelled) return;
+        setCloud((current) => ({
+          ...current,
+          available: true,
+          loading: false,
+          online: false,
+          error: "클라우드 저장소에 연결하지 못해 이 기기의 저장 기록을 사용 중입니다.",
+        }));
+      }
+    };
+
+    queueMicrotask(() => {
+      loadLocal();
+      void loadCloud();
     });
+
+    const unsubscribe = subscribeToAuthChanges((identity) => {
+      if (cancelled || !identity) return;
+      setCloud((current) => ({ ...current, identity, loading: true }));
+      void loadCloud();
+    });
+
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
   }, []);
 
   // iOS Safari only applies :active (the press state) once any touchstart listener exists.
@@ -107,11 +175,17 @@ export function ShoppingApp() {
     setHistory(localShoppingRepository.deleteAnalysis(id));
     // A deleted record must not stay reachable through the Result tab.
     setResult((current) => (current?.id === id ? null : current));
+    deleteRemoteAnalysis(id).catch(() => {
+      setCloud((current) => ({ ...current, online: false, error: "삭제 내역을 클라우드에 반영하지 못했어요. 이 기기에는 삭제되었습니다." }));
+    });
   }
 
   function saveProfile(next: UserProfile) {
     setProfile(next);
     localShoppingRepository.saveProfile(next);
+    saveRemoteProfile(next).catch(() => {
+      setCloud((current) => ({ ...current, online: false, error: "프로필을 클라우드에 저장하지 못해 이 기기에 보관했습니다." }));
+    });
   }
 
   function togglePreference(id: UserPreference["id"]) {
@@ -120,6 +194,21 @@ export function ShoppingApp() {
       : [...preferences, { id, weight: 2 as const }];
     setPreferences(next);
     localShoppingRepository.savePreferences(next);
+    saveRemotePreferences(next).catch(() => {
+      setCloud((current) => ({ ...current, online: false, error: "취향 설정을 클라우드에 저장하지 못해 이 기기에 보관했습니다." }));
+    });
+  }
+
+  function connectKakao() {
+    linkKakaoIdentity().catch(() => {
+      setCloud((current) => ({ ...current, error: "Kakao 연결을 시작하지 못했어요. 잠시 후 다시 시도해 주세요." }));
+    });
+  }
+
+  function loadLinkedKakao() {
+    signInWithKakao().catch(() => {
+      setCloud((current) => ({ ...current, error: "Kakao 로그인을 시작하지 못했어요. 잠시 후 다시 시도해 주세요." }));
+    });
   }
 
   async function runAnalysis(origin: HTMLElement | null, input?: ProductInput) {
@@ -155,6 +244,9 @@ export function ShoppingApp() {
       await sleep(DONE_HOLD_MS);
 
       localShoppingRepository.saveAnalysis(analysis);
+      saveRemoteAnalysis(analysis).catch(() => {
+        setCloud((current) => ({ ...current, online: false, error: "분석 기록을 클라우드에 저장하지 못해 이 기기에 보관했습니다." }));
+      });
       withViewTransition(
         () => {
           setResult(analysis);
@@ -215,9 +307,17 @@ export function ShoppingApp() {
           {view === "result" && !result && (
             <EmptyJourney title="아직 결과가 없어요" body="상품 URL을 먼저 분석하면 나와의 궁합이 여기에 나타납니다." onAction={() => go("home")} />
           )}
-          {view === "history" && <HistoryStage history={history} onOpen={openResult} onDelete={deleteHistoryItem} onStart={() => go("home")} />}
+          {view === "history" && (
+            <HistoryStage
+              history={history}
+              onOpen={openResult}
+              onDelete={deleteHistoryItem}
+              onStart={() => go("home")}
+              syncCta={<CloudSyncCard state={cloud} onLinkKakao={connectKakao} onSignInKakao={loadLinkedKakao} />}
+            />
+          )}
           {view === "preferences" && <PreferencesStage selected={selectedPreferenceIds} onToggle={togglePreference} />}
-          {view === "profile" && <ProfileStage profile={profile} onSave={saveProfile} />}
+          {view === "profile" && <ProfileStage profile={profile} onSave={saveProfile} syncCta={<CloudSyncCard state={cloud} onLinkKakao={connectKakao} onSignInKakao={loadLinkedKakao} />} />}
         </>
       )}
 

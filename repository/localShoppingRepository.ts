@@ -1,12 +1,12 @@
 import { migratePreferences, STORAGE_SCHEMA_VERSION } from "@/domain/preferenceMigration";
 import type { AnalysisResult, UserPreference, UserProfile } from "@/types/shopping";
 
-const profileKey = "shopping-assistant:profile";
-const preferencesKey = "shopping-assistant:preferences";
-const historyKey = "shopping-assistant:history";
-const schemaKey = "shopping-assistant:schema";
+export const profileKey = "shopping-assistant:profile";
+export const preferencesKey = "shopping-assistant:preferences";
+export const historyKey = "shopping-assistant:history";
+export const schemaKey = "shopping-assistant:schema";
 
-const defaultPreferences: UserPreference[] = [
+export const defaultPreferences: UserPreference[] = [
   { id: "warmth", weight: 2 },
   { id: "soft_touch", weight: 2 },
   { id: "low_pilling", weight: 2 },
@@ -19,12 +19,13 @@ export type ShoppingRepository = {
   getPreferences(): UserPreference[];
   savePreferences(preferences: UserPreference[]): void;
   getHistory(): AnalysisResult[];
+  setHistory(history: AnalysisResult[]): void;
   saveAnalysis(result: AnalysisResult): void;
   /** Removes one record and returns what is left. Profile and preferences are untouched. */
   deleteAnalysis(id: string): AnalysisResult[];
 };
 
-function readJson<T>(key: string, fallback: T): T {
+export function readJson<T>(key: string, fallback: T): T {
   if (typeof window === "undefined") return fallback;
   const raw = window.localStorage.getItem(key);
   if (!raw) return fallback;
@@ -35,7 +36,7 @@ function readJson<T>(key: string, fallback: T): T {
   }
 }
 
-function writeJson<T>(key: string, value: T) {
+export function writeJson<T>(key: string, value: T) {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(key, JSON.stringify(value));
 }
@@ -67,6 +68,9 @@ export const localShoppingRepository: ShoppingRepository = {
   },
   getHistory() {
     return readJson<AnalysisResult[]>(historyKey, []);
+  },
+  setHistory(history) {
+    writeJson(historyKey, history);
   },
   saveAnalysis(result) {
     const next = [result, ...this.getHistory().filter((item) => item.id !== result.id)].slice(0, 12);

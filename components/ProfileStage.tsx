@@ -1,7 +1,7 @@
 "use client";
 
 import { Check } from "lucide-react";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { NumberField, ProgressivePanel, SelectField, TextField } from "@/components/common";
 import { RollingNumber } from "@/components/motion/RollingNumber";
 import type { FitPreference, Gender, UserProfile } from "@/types/shopping";
@@ -20,7 +20,7 @@ const genderLabels: Record<Gender, string> = {
   prefer_not_to_say: "선택 안 함",
 };
 
-export function ProfileStage({ profile, onSave }: { profile: UserProfile; onSave: (profile: UserProfile) => void }) {
+export function ProfileStage({ profile, onSave, syncCta }: { profile: UserProfile; onSave: (profile: UserProfile) => void; syncCta?: ReactNode }) {
   const [draft, setDraft] = useState(profile);
   const [showBasics, setShowBasics] = useState(false);
   const [showMeasurements, setShowMeasurements] = useState(false);
@@ -43,6 +43,7 @@ export function ProfileStage({ profile, onSave }: { profile: UserProfile; onSave
       <div className="profile-editor">
         <h2>현재 정보만으로 기본 추천이 가능합니다.</h2>
         <p>필요한 만큼만 열어 수정하세요. 상세 측정은 처음부터 요구하지 않습니다.</p>
+        {syncCta}
 
         <ProgressivePanel title="신체 정보" open={showBasics} onToggle={() => setShowBasics((value) => !value)}>
           <div className="field-grid">

@@ -944,6 +944,87 @@ button:disabled {
   border: 0;
 }
 
+.cloud-sync-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.85rem;
+  align-items: start;
+  margin: 1.25rem 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  padding: 1rem 0;
+  color: var(--ink);
+}
+
+.cloud-sync-card > svg,
+.cloud-sync-card > img {
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 999px;
+  background: rgb(49 95 85 / 0.1);
+  color: var(--accent);
+  padding: 0.5rem;
+}
+
+.cloud-sync-card > img {
+  object-fit: cover;
+  padding: 0;
+}
+
+.cloud-sync-card strong {
+  display: block;
+  margin-bottom: 0.25rem;
+  font-weight: 880;
+}
+
+.cloud-sync-card p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.cloud-sync-error {
+  margin-top: 0.45rem !important;
+  color: var(--danger) !important;
+}
+
+.cloud-sync-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.8rem;
+}
+
+.kakao-button,
+.ghost-sync-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  border-radius: 999px;
+  padding: 0.7rem 0.9rem;
+  font-weight: 820;
+  transition:
+    transform 260ms var(--ease-press),
+    background-color 260ms var(--ease-press);
+}
+
+.kakao-button {
+  border: 0;
+  background: #fee500;
+  color: #191600;
+}
+
+.ghost-sync-button {
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink);
+}
+
+.kakao-button:active,
+.ghost-sync-button:active {
+  transform: scale(0.98);
+}
+
 .preferences-stage {
   display: grid;
   gap: clamp(2rem, 6vw, 5rem);

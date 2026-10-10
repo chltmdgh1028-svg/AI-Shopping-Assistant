@@ -1,7 +1,7 @@
 "use client";
 
 import { ChevronLeft, ChevronRight, MoreHorizontal, Trash2 } from "lucide-react";
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { EmptyJourney, Mask, ProductVisual } from "@/components/common";
 import { useFrameGate, useReducedMotion } from "@/components/motion/hooks";
 import { RollingNumber } from "@/components/motion/RollingNumber";
@@ -13,11 +13,13 @@ export function HistoryStage({
   onOpen,
   onDelete,
   onStart,
+  syncCta,
 }: {
   history: AnalysisResult[];
   onOpen: (result: AnalysisResult) => void;
   onDelete: (id: string) => void;
   onStart: () => void;
+  syncCta?: ReactNode;
 }) {
   // Told apart so the screen can say "nothing left" after the last record is deleted, not "nothing yet".
   const [hadRecords, setHadRecords] = useState(history.length > 0);
@@ -25,9 +27,15 @@ export function HistoryStage({
 
   if (history.length === 0) {
     return hadRecords ? (
-      <EmptyJourney title="아직 남아 있는 분석 기록이 없어요." body="상품 링크를 분석하면 이곳에 다시 쌓여요." onAction={onStart} />
+      <section className="history-stage stage-reveal">
+        {syncCta}
+        <EmptyJourney title="아직 남아 있는 분석 기록이 없어요." body="상품 링크를 분석하면 이곳에 다시 쌓여요." onAction={onStart} />
+      </section>
     ) : (
-      <EmptyJourney title="아직 분석 기록이 없습니다" body="상품 링크를 분석하면 궁합 점수와 추천 사이즈가 이곳에 쌓입니다." onAction={onStart} />
+      <section className="history-stage stage-reveal">
+        {syncCta}
+        <EmptyJourney title="아직 분석 기록이 없습니다" body="상품 링크를 분석하면 궁합 점수와 추천 사이즈가 이곳에 쌓입니다." onAction={onStart} />
+      </section>
     );
   }
 
@@ -37,6 +45,7 @@ export function HistoryStage({
         <p className="brand-line">Archive</p>
         <Mask as="h1">다시 볼 옷들</Mask>
       </div>
+      {syncCta}
       <Coverflow items={history} onOpen={onOpen} onDelete={onDelete} />
     </section>
   );
