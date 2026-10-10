@@ -9,6 +9,7 @@ import type { AnalysisResult, UserPreference, UserProfile } from "@/types/shoppi
 
 const migrationKey = (userId: string) => `shopping-assistant:supabase-migrated:${userId}`;
 const maxHistory = 12;
+const kakaoProfileScope = "profile_nickname profile_image";
 
 export type CloudIdentity = {
   userId: string;
@@ -173,7 +174,7 @@ export async function linkKakaoIdentity() {
   await ensureSupabaseSession();
   const { error } = await supabase.auth.linkIdentity({
     provider: "kakao",
-    options: { redirectTo: `${window.location.origin}/auth/callback` },
+    options: { redirectTo: `${window.location.origin}/auth/callback`, scopes: kakaoProfileScope },
   });
   if (error) throw error;
 }
@@ -184,7 +185,7 @@ export async function signInWithKakao() {
   await supabase.auth.signOut({ scope: "local" });
   const { error } = await supabase.auth.signInWithOAuth({
     provider: "kakao",
-    options: { redirectTo: `${window.location.origin}/auth/callback` },
+    options: { redirectTo: `${window.location.origin}/auth/callback`, scopes: kakaoProfileScope },
   });
   if (error) throw error;
 }
