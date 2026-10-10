@@ -20,8 +20,10 @@ export const VISION_LIMITS = {
   /** Tiles sent in one detailed read, and how many reads may run side by side. */
   batchSize: 4,
   maxBatches: 2,
-  /** A page with this few images (or fewer) is read from its clearest tiles, with no scan. */
+  /** A page with this few images (or fewer) has nothing to choose from: every tile is read, with no scan. */
   fewImages: 4,
+  /** The most tiles read on such a page (three reads side by side). */
+  fewImagesMaxTiles: 12,
   /** Longest one close read may take. */
   detailMaxMs: 20_000,
   /** Below this much time left in the request, the image stage is not started. */
@@ -224,12 +226,17 @@ export async function runVisionFallback(args: {
 
   if (tiles.length <= VISION_LIMITS.directReadMaxTiles) {
     batchTiles(tiles).slice(0, VISION_LIMITS.maxBatches).forEach(start);
+  } else if (loaded.length <= VISION_LIMITS.fewImages) {
+    // Few images, many tiles (each is long): there is nothing to choose between, and a size table or a composition line can sit
+    // in any tile. Read them all, best-looking first, side by side.
+    mode = "heuristic";
+    const ordered = [...tiles].sort((a, b) => b.score - a.score || byPosition(a, b)).slice(0, VISION_LIMITS.fewImagesMaxTiles);
+    batchTiles(ordered).forEach(start);
   } else {
     const first = orderDetailTiles(tiles, emptyCandidates, want, { heuristic: true, limit: VISION_LIMITS.batchSize });
     if (first.length > 0) start(first);
 
-    // A page with only a few images has little to choose from: the clearest tiles are enough, no scan.
-    const scan = loaded.length > VISION_LIMITS.fewImages && provider.scanDetailImages ? await scanForCandidates() : undefined;
+      const scan = provider.scanDetailImages ? await scanForCandidates() : undefined;
     mode = scan ? "scan" : "heuristic";
     candidates = scan ?? emptyCandidates;
 
@@ -282,8 +289,18 @@ export async function runVisionFallback(args: {
   const sizes: ProductSize[] = [];
   for (const row of results.flatMap((result) => result.sizes)) if (!sizes.some((existing) => existing.name === row.name)) sizes.push(row);
   const care = [...new Set(results.flatMap((result) => result.careInstructions))].slice(0, 8);
-  const evidence: VisionEvidence[] = results.flatMap((result) => result.evidence).filter((item, position, all) => all.findIndex((other) => other.field === item.field && other.imageIndex === item.imageIndex && other.tileIndex === item.tileIndex) === position);
+  const reported: VisionEvidence[] = results.flatMap((result) => result.evidence).filter((item, position, all) => all.findIndex((other) => other.field === item.field && other.imageIndex === item.imageIndex && other.tileIndex === item.tileIndex) === position);
   const model = results[0].model;
+  // The model did not say which image it read a field from: fall back on what the scan had pointed it at, marked low.
+  const inferred: VisionEvidence[] = (["materials", "sizes", "care"] as const).flatMap((field) =>
+    reported.some((item) => item.field === field)
+      ? []
+      : candidates[field === "care" ? "care" : field].flatMap((label) => {
+          const found = tiles.find((tile) => tile.label === label);
+          return found ? [{ field, imageIndex: found.imageIndex, tileIndex: found.tileCount > 1 ? found.tileIndex : undefined, confidence: "low" as const }] : [];
+        }),
+  );
+  const evidence: VisionEvidence[] = [...reported, ...inferred];
 
   const filled: Array<"materials" | "sizes" | "care"> = [];
   const next: ProductFacts = { ...product };

@@ -248,6 +248,23 @@ describe("not waiting in line", () => {
     expect(outcome.product.materials.length).toBeGreaterThan(0);
   });
 
+  it("reads every tile of a page with three long images, side by side", async () => {
+    const images = { 1: await table(860, 4200), 2: await table(860, 4200), 3: await table(860, 4200) };
+    const model = provider({ detail: { materials: cotton } });
+    const outcome = await run({ count: 3, images, provider: model.provider });
+    expect(model.scanDetailImages).not.toHaveBeenCalled();
+    expect(model.extractFromImages).toHaveBeenCalledTimes(3);
+    const labels = model.extractFromImages.mock.calls.flatMap(([call]) => call.labels ?? []);
+    expect(new Set(labels).size).toBe(12);
+    expect(outcome.product.extractionMetadata?.vision?.tiles).toBe(12);
+  });
+
+  it("says where it looked even when the model does not say where it read", async () => {
+    const model = provider({ scan: { materials: ["19-2"], sizes: [], care: [] }, detail: { materials: cotton, evidence: [] } });
+    const outcome = await run({ product: baseProduct({ sizes: freeSize }), count: 24, images: await lookbook(), provider: model.provider });
+    expect(outcome.product.extractionMetadata?.vision?.evidence).toEqual([{ field: "materials", imageIndex: 19, tileIndex: 2, confidence: "low" }]);
+  });
+
   it("keeps what one read found when the other fails", async () => {
     const model = provider({ scan: { materials: ["19-2"], sizes: [], care: [] } });
     let call = 0;

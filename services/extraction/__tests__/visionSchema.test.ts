@@ -179,6 +179,35 @@ describe("size tables by garment", () => {
   });
 });
 
+describe("a product sold as a set", () => {
+  it("keeps the sizes of one garment when the tables of two are mixed, and says so", () => {
+    const reading = mapVisionResult({
+      ...empty,
+      sizes: [
+        size({ name: "XS", chest: 41, length: 34, flatWidth: true }),
+        size({ name: "S", chest: 43, length: 35, flatWidth: true }),
+        size({ name: "M", waist: 36.7, hip: 47.5, length: 56, flatWidth: true }),
+      ],
+    });
+    expect(reading.sizes.map((row) => row.name)).toEqual(["XS", "S"]);
+    expect(reading.warnings.join(" ")).toContain("여러 옷의 사이즈표");
+  });
+
+  it("keeps the larger group when it is the lower garment", () => {
+    const reading = mapVisionResult({
+      ...empty,
+      sizes: [size({ name: "S", waist: 32, hip: 44, flatWidth: true }), size({ name: "M", waist: 34, hip: 46, flatWidth: true }), size({ name: "L", chest: 50, flatWidth: true })],
+    });
+    expect(reading.sizes.map((row) => row.name)).toEqual(["S", "M"]);
+  });
+
+  it("leaves a normal single table alone", () => {
+    const reading = mapVisionResult({ ...empty, sizes: [size({ name: "S", chest: 100, flatWidth: false }), size({ name: "M", chest: 104, flatWidth: false })] });
+    expect(reading.sizes).toHaveLength(2);
+    expect(reading.warnings).toEqual([]);
+  });
+});
+
 describe("where a value was read", () => {
   it("parses image and tile labels", () => {
     expect(parseLabel("17")).toEqual({ imageIndex: 17, tileIndex: undefined });

@@ -127,6 +127,21 @@ const ranges: Record<Measure, [number, number]> = {
 };
 const measures = Object.keys(ranges) as Measure[];
 
+const isUpper = (row: VisionResult["sizes"][number]) => row.chest !== null || row.shoulder !== null;
+const isLower = (row: VisionResult["sizes"][number]) => !isUpper(row) && (row.waist !== null || row.hip !== null || row.thigh !== null || row.rise !== null);
+
+/**
+ * A set sold as one product ("자켓 + 스커트 투피스") has one table per garment, and the sizes of the two share names. Rows
+ * that describe different garments cannot be mixed: only the larger group is kept, and the page is told so.
+ */
+function onlyOneGarment(rows: VisionResult["sizes"], warnings: string[]) {
+  const upper = rows.filter(isUpper);
+  const lower = rows.filter(isLower);
+  if (upper.length === 0 || lower.length === 0) return rows;
+  warnings.push("한 상품에 여러 옷의 사이즈표가 섞여 있어 한 종류만 사용했어요.");
+  return lower.length > upper.length ? lower : upper;
+}
+
 export type VisionEvidence = { field: VisionField; imageIndex: number; tileIndex?: number; confidence: ExtractionConfidence };
 
 export type VisionReading = {
@@ -178,7 +193,7 @@ export function mapVisionResult(raw: VisionResult, want: VisionField[] = ["mater
   const sizes: ProductSize[] = [];
   if (want.includes("sizes")) {
     const seen = new Set<string>();
-    for (const row of raw.sizes) {
+    for (const row of onlyOneGarment(raw.sizes, warnings)) {
       const name = row.name.trim().toUpperCase();
       if (!name || name.length > 12 || seen.has(name)) continue;
 
