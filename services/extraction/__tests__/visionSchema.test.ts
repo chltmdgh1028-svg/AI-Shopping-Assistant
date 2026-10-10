@@ -109,6 +109,13 @@ describe("reading the model's answer", () => {
     expect(reading.materials.map((item) => item.name)).toEqual(["Cotton"]);
   });
 
+  it("writes fibers the way the app does everywhere else", () => {
+    const reading = mapVisionResult({ ...empty, materials: [{ name: "cotton", percentage: 95 }, { name: "SPANDEX", percentage: 5 }] });
+    expect(reading.materials.map((item) => item.name)).toEqual(["Cotton", "Spandex"]);
+    const unknown = mapVisionResult({ ...empty, materials: [{ name: "qiviut", percentage: 100 }] });
+    expect(unknown.materials[0].name).toBe("Qiviut");
+  });
+
   it("converts inches to centimetres", () => {
     const reading = mapVisionResult({ ...empty, sizes: [size({ chest: 40, length: 26, unit: "inch", flatWidth: false })] });
     expect(reading.sizes[0]).toMatchObject({ chest: 101.6, length: 66 });

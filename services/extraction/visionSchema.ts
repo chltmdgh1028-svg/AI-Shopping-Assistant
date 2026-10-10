@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { looksLikeCareInstruction } from "@/domain/careSignals";
+import { materialKnowledge } from "@/data/materials";
+import { normalizeMaterialName } from "@/domain/materialEvaluation";
 import { interpretWidth, isWidthMeasure, type Measure, type WidthLabel } from "@/domain/sizeMeasurements";
 import type { ExtractionConfidence, MaterialBlend, ProductSize } from "@/types/shopping";
 
@@ -153,6 +155,14 @@ export type VisionReading = {
   evidence: VisionEvidence[];
 };
 
+/** "cotton" and "COTTON" are shown as the app writes every fiber it knows ("Cotton"); an unknown fiber just gets a capital. */
+function displayFiberName(raw: string) {
+  const key = normalizeMaterialName(raw);
+  const known = materialKnowledge[key];
+  if (known) return known.displayName ?? key.charAt(0).toUpperCase() + key.slice(1);
+  return raw.charAt(0).toUpperCase() + raw.slice(1);
+}
+
 /** "17-2" is image 17, tile 2 of its long image; "17" is the whole image. */
 export function parseLabel(label: string): { imageIndex: number; tileIndex?: number } | undefined {
   const match = label.trim().match(/^(\d{1,3})(?:-(\d{1,2}))?$/);
@@ -180,7 +190,7 @@ export function mapVisionResult(raw: VisionResult, want: VisionField[] = ["mater
     for (const item of raw.materials) {
       const name = item.name.trim();
       if (!name || name.length > 40 || /\d/.test(name) || named.has(name.toLowerCase())) continue;
-      named.set(name.toLowerCase(), { name, percentage: Math.round(item.percentage * 10) / 10, source: "image-vision", confidence });
+      named.set(name.toLowerCase(), { name: displayFiberName(name), percentage: Math.round(item.percentage * 10) / 10, source: "image-vision", confidence });
     }
     materials = [...named.values()];
     const total = materials.reduce((sum, item) => sum + item.percentage, 0);
