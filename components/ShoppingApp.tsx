@@ -70,7 +70,7 @@ function describeTarget(input: ProductInput): AnalyzingTarget {
   }
 }
 
-export function ShoppingApp() {
+export function ShoppingApp({ initialAuthTransition = false }: { initialAuthTransition?: boolean }) {
   const [view, setView] = useState<View>("home");
   const [profile, setProfile] = useState<UserProfile>(defaultProfile);
   const [preferences, setPreferences] = useState<UserPreference[]>(defaultPreferences);
@@ -85,6 +85,7 @@ export function ShoppingApp() {
   const [target, setTarget] = useState<AnalyzingTarget>({ kind: "sample", name: demoProduct.productName });
   const [flood, setFlood] = useState<{ x: number; y: number } | null>(null);
   const [cloud, setCloud] = useState<CloudState>(emptyCloudState);
+  const [authTransition, setAuthTransition] = useState(initialAuthTransition);
   const analysisInFlight = useRef(false);
 
   useEffect(() => {
@@ -108,6 +109,7 @@ export function ShoppingApp() {
     const loadCloud = async () => {
       if (!emptyCloudState.available) {
         setCloud({ ...emptyCloudState, loading: false });
+        setAuthTransition(false);
         return;
       }
 
@@ -130,6 +132,7 @@ export function ShoppingApp() {
         setPreferences(remote.preferences ?? defaultPreferences);
         setHistory(remote.history);
         setCloud({ available: true, loading: false, online: true, migrated: migrated || merged, identity });
+        setAuthTransition(false);
       } catch {
         if (cancelled) return;
         setCloud((current) => ({
@@ -139,6 +142,7 @@ export function ShoppingApp() {
           online: false,
           error: "클라우드 저장소에 연결하지 못해 이 기기의 저장 기록을 사용 중입니다.",
         }));
+        setAuthTransition(false);
       }
     };
 
@@ -149,13 +153,16 @@ export function ShoppingApp() {
         recordProviderCallbackTrace(providerError);
         const pendingLink = readPendingKakaoLink();
         if (pendingLink && isIdentityConflictError(providerError)) {
+          setAuthTransition(true);
           setCloud((current) => ({ ...current, loading: true, error: "이미 연결된 Kakao 계정이 있어 해당 계정으로 기록을 합치는 중입니다." }));
           window.history.replaceState(null, "", window.location.pathname);
           void signInWithKakaoAfterLinkConflict(providerError).catch(() => {
+            setAuthTransition(false);
             setCloud((current) => ({ ...current, loading: false, error: "기존 Kakao 계정으로 전환하지 못했어요. 다시 시도해 주세요." }));
           });
           return;
         }
+        setAuthTransition(false);
         setCloud((current) => ({
           ...current,
           loading: false,
@@ -336,7 +343,11 @@ export function ShoppingApp() {
 
   return (
     <main className="fashion-app">
-      <AppNav view={view} hasResult={Boolean(result)} onChange={go} />
+      {authTransition ? (
+        <AuthTransitionStage />
+      ) : (
+        <>
+          <AppNav view={view} hasResult={Boolean(result)} onChange={go} />
       {isAnalyzing ? (
         <AnalyzingStage activeIndex={loadingIndex} target={target} />
       ) : (
@@ -384,6 +395,18 @@ export function ShoppingApp() {
       )}
 
       {flood && <div className="flood" style={{ "--x": `${flood.x}px`, "--y": `${flood.y}px` } as React.CSSProperties} onAnimationEnd={() => setFlood(null)} aria-hidden="true" />}
+        </>
+      )}
     </main>
+  );
+}
+
+function AuthTransitionStage() {
+  return (
+    <section className="auth-transition-stage" role="status" aria-live="polite">
+      <p className="brand-line">Kakao sync</p>
+      <h1>Kakao 계정 연결 중...</h1>
+      <p>기록을 안전하게 이어 붙이는 중입니다.</p>
+    </section>
   );
 }

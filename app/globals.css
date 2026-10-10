@@ -1099,6 +1099,31 @@ button:disabled {
   margin: 1rem 0 0;
 }
 
+.auth-transition-stage {
+  display: grid;
+  min-height: 100dvh;
+  place-content: center;
+  padding: clamp(2rem, 7vw, 6rem);
+  background:
+    linear-gradient(120deg, rgb(49 95 85 / 0.14), transparent 38%),
+    radial-gradient(circle at 78% 24%, rgb(199 255 46 / 0.24), transparent 24%),
+    var(--paper);
+  color: var(--ink);
+  text-align: center;
+}
+
+.auth-transition-stage h1 {
+  margin: 0;
+  font-size: clamp(3rem, 8vw, 7rem);
+  line-height: 1.2;
+}
+
+.auth-transition-stage p:last-child {
+  margin: 0.9rem 0 0;
+  color: var(--muted);
+  font-size: 1.08rem;
+}
+
 .stage-reveal {
   animation: stage-reveal 560ms var(--ease-out) both;
 }
