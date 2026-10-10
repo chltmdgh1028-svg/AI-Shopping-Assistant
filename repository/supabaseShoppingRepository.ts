@@ -9,6 +9,7 @@ import type { AnalysisResult, UserPreference, UserProfile } from "@/types/shoppi
 
 const migrationKey = (userId: string) => `shopping-assistant:supabase-migrated:${userId}`;
 const pendingKakaoLinkKey = "shopping-assistant:pending-kakao-link";
+const authTraceKey = "shopping-assistant:auth-trace";
 const maxHistory = 12;
 const kakaoProfileScope = "profile_nickname profile_image";
 
@@ -210,6 +211,7 @@ export async function linkKakaoIdentity() {
   if (!user) throw new AuthFlowError("Supabase session is not available.", diagnosticsFromUser(null));
 
   const before = diagnosticsFromUser(user);
+  recordAuthTrace("link:before", before);
   if (!user.is_anonymous) {
     throw new AuthFlowError("이미 Kakao 계정으로 보관 중입니다.", before);
   }
@@ -220,7 +222,10 @@ export async function linkKakaoIdentity() {
   });
   if (error) throw toAuthFlowError("Kakao identity linking URL을 만들지 못했습니다.", error, before);
   if (!data.url) throw new AuthFlowError("Kakao identity linking URL이 비어 있습니다.", before);
+  recordAuthTrace("link:returned-url", { ...sanitizeUrlForTrace(data.url), provider: data.provider });
+  assertOAuthRedirectUrl(data.url, "Kakao identity linking");
   writeJson(pendingKakaoLinkKey, { userId: user.id, startedAt: new Date().toISOString() });
+  recordAuthTrace("link:assign", sanitizeUrlForTrace(data.url));
   window.location.assign(data.url);
 }
 
@@ -236,6 +241,9 @@ export async function signInWithKakao() {
   });
   if (error) throw error;
   if (!data.url) throw new Error("Kakao login URL is empty.");
+  recordAuthTrace("signin:returned-url", { ...sanitizeUrlForTrace(data.url), provider: data.provider });
+  assertOAuthRedirectUrl(data.url, "Kakao login");
+  recordAuthTrace("signin:assign", sanitizeUrlForTrace(data.url));
   window.location.assign(data.url);
 }
 
@@ -321,8 +329,43 @@ function diagnosticsFromUser(user: User | null, error?: unknown): AuthFlowDiagno
 
 function toAuthFlowError(message: string, error: unknown, sessionDiagnostics: AuthFlowDiagnostics) {
   const diagnostics = { ...sessionDiagnostics, ...diagnosticsFromUser(null, error), hasSession: sessionDiagnostics.hasSession, userId: sessionDiagnostics.userId, isAnonymous: sessionDiagnostics.isAnonymous, providers: sessionDiagnostics.providers, currentProvider: sessionDiagnostics.currentProvider };
+  recordAuthTrace("link:error", diagnostics);
   console.warn("Kakao linkIdentity failed", diagnostics);
   return new AuthFlowError(message, diagnostics);
+}
+
+function assertOAuthRedirectUrl(url: string, label: string) {
+  const parsed = new URL(url);
+  const isOwnCallback = parsed.origin === window.location.origin && parsed.pathname === "/auth/callback";
+  if (isOwnCallback) {
+    const diagnostics = { ...sanitizeUrlForTrace(url), message: `${label} returned the app callback instead of an OAuth authorize URL.` };
+    recordAuthTrace("oauth-url:invalid-callback", diagnostics);
+    throw new AuthFlowError(`${label} URL이 OAuth 화면이 아니라 callback으로 돌아왔습니다.`, {
+      hasSession: true,
+      providers: [],
+      message: diagnostics.message,
+    });
+  }
+}
+
+function sanitizeUrlForTrace(url: string) {
+  const parsed = new URL(url);
+  return {
+    host: parsed.host,
+    path: parsed.pathname,
+    searchKeys: [...parsed.searchParams.keys()].filter((key) => key !== "code"),
+    hasCode: parsed.searchParams.has("code"),
+    error: parsed.searchParams.get("error") ?? undefined,
+    errorCode: parsed.searchParams.get("error_code") ?? undefined,
+  };
+}
+
+function recordAuthTrace(stage: string, detail: unknown) {
+  if (typeof window === "undefined") return;
+  const previous = readJson<Array<{ stage: string; at: string; detail: unknown }>>(authTraceKey, []);
+  const next = [...previous, { stage, at: new Date().toISOString(), detail }].slice(-20);
+  writeJson(authTraceKey, next);
+  console.info(`[auth:${stage}]`, detail);
 }
 
 function stringMetadata(value: unknown) {

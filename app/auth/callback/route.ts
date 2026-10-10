@@ -8,22 +8,30 @@ export async function GET(request: NextRequest) {
   const next = sanitizeNext(url.searchParams.get("next")) ?? "/";
 
   if (providerError) return redirectWithAuthError(url, "provider_error");
+  if (!code) return redirectWithAuthError(url, "missing_code");
 
-  if (code) {
-    const supabase = await createSupabaseServerClient();
-    const exchanged = await supabase?.auth.exchangeCodeForSession(code);
-    if (exchanged?.error) return redirectWithAuthError(url, "exchange_failed");
+  const supabase = await createSupabaseServerClient();
+  const exchanged = await supabase?.auth.exchangeCodeForSession(code);
+  if (exchanged?.error) return redirectWithAuthError(url, "exchange_failed");
 
-    const userResult = await supabase?.auth.getUser();
-    const user = userResult?.data.user;
-    if (userResult?.error || !user) return redirectWithAuthError(url, "missing_user");
+  const userResult = await supabase?.auth.getUser();
+  const user = userResult?.data.user;
+  if (userResult?.error || !user) return redirectWithAuthError(url, "missing_user");
 
-    const hasKakao = user.identities?.some((identity) => identity.provider === "kakao");
-    if (!hasKakao) return redirectWithAuthError(url, "missing_kakao_identity");
-  }
+  const providers = user.identities?.map((identity) => identity.provider) ?? [];
+  console.info("Kakao auth callback exchanged", {
+    hasUser: Boolean(user),
+    userId: user.id,
+    isAnonymous: user.is_anonymous,
+    providers,
+  });
+
+  const hasKakao = providers.includes("kakao");
+  if (!hasKakao) return redirectWithAuthError(url, "missing_kakao_identity");
+  if (user.is_anonymous) return redirectWithAuthError(url, "still_anonymous_after_kakao");
 
   url.pathname = next;
-  url.search = "";
+  url.search = "?auth_callback=success";
   return NextResponse.redirect(url);
 }
 
