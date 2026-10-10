@@ -77,6 +77,8 @@ describe("pasting a Zigzag share link", () => {
     expect(result.product.materials.map((item) => item.name)).toEqual(["Cotton", "Polyester", "PBT"]);
     expect(result.product.careInstructions).toEqual(["찬물 세탁"]);
     expect(result.product.extractionMetadata?.aiModel).toBe("gemini-3.5-flash-lite");
+    // What the adapter had to assume (laid-flat chest doubled) stays visible when the model also ran.
+    expect(result.product.extractionMetadata?.warnings.join(" ")).toContain("43.5cm");
   });
 
   it("evaluates the result like any other product: viscose-free blend, estimated size, price judged", async () => {

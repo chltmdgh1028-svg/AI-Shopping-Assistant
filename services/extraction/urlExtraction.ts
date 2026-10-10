@@ -73,7 +73,7 @@ export async function extractProductFromUrl(
         aiProvider: aiProvider.providerName,
         aiStatus: "used",
         aiModel: ai.model,
-        warnings: [...buildWarnings(product, hasStructuredData), ...ai.warnings],
+        warnings: [...buildWarnings(product, hasStructuredData), ...(adapter?.warnings ?? []), ...ai.warnings],
       };
     } catch (error) {
       const code = error instanceof ExtractionProviderError ? error.code : "upstream";
