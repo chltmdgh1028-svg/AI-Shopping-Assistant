@@ -1,4 +1,4 @@
-import { ApiError, GoogleGenAI } from "@google/genai";
+import { ApiError, GoogleGenAI, type MediaResolution } from "@google/genai";
 import type { GeminiConfig } from "@/lib/env";
 import {
   ExtractionProviderError,
@@ -29,6 +29,9 @@ export const GEMINI_TOTAL_BUDGET_MS = 28_000;
 export const GEMINI_VISION_ATTEMPT_TIMEOUT_MS = 20_000;
 // Choosing candidates from thumbnails is a short job; it must not eat the time the detailed read needs.
 export const GEMINI_SCAN_ATTEMPT_TIMEOUT_MS = 9_000;
+// How long the first model gets before the next one is started beside it.
+const SCAN_HEDGE_AFTER_MS = 4_000;
+const VISION_HEDGE_AFTER_MS = 6_000;
 const MIN_SCAN_ATTEMPT_MS = 4_000;
 // A vision retry on another model needs real time to finish; with less than this it would only time out too.
 const MIN_VISION_ATTEMPT_MS = 9_000;
@@ -46,6 +49,8 @@ export type GenerateJson = (request: {
   imageLabels?: string[];
   /** JSON Schema for the structured answer. Defaults to the product schema. */
   schema?: object;
+  /** Read the images at a cheaper resolution (contact sheets: layout is all that matters). */
+  lowResolution?: boolean;
 }) => Promise<string | undefined>;
 
 type Job = {
@@ -54,6 +59,10 @@ type Job = {
   images?: ImageInput[];
   imageLabels?: string[];
   schema?: object;
+  /** The images are thumbnails or sheets read for layout only: a cheaper image resolution is enough. */
+  lowResolution?: boolean;
+  /** Start the next model alongside a slow one after this long (see hedged). Absent: strictly one model at a time. */
+  hedgeAfterMs?: number;
   attemptTimeoutMs: number;
   totalBudgetMs: number;
   minAttemptMs?: number;
@@ -69,6 +78,8 @@ export class GeminiProductExtractionProvider implements ProductExtractionProvide
     generate: GenerateJson = createSdkGenerator(config),
     private readonly attemptTimeoutMs = GEMINI_ATTEMPT_TIMEOUT_MS,
     private readonly totalBudgetMs = GEMINI_TOTAL_BUDGET_MS,
+    /** Scales the hedge delays; only tests change it. */
+    private readonly hedgeScale = 1,
   ) {
     this.generate = generate;
   }
@@ -117,6 +128,7 @@ export class GeminiProductExtractionProvider implements ProductExtractionProvide
       images: input.images,
       imageLabels: input.labels,
       schema: visionResponseJsonSchema,
+      hedgeAfterMs: VISION_HEDGE_AFTER_MS * this.hedgeScale,
       attemptTimeoutMs: Math.min(GEMINI_VISION_ATTEMPT_TIMEOUT_MS, input.budgetMs),
       totalBudgetMs: input.budgetMs,
       minAttemptMs: MIN_VISION_ATTEMPT_MS,
@@ -134,6 +146,8 @@ export class GeminiProductExtractionProvider implements ProductExtractionProvide
       prompt: buildScanPrompt({ sheetLabels: input.sheetLabels, columns: input.columns, want: input.want }),
       images: input.sheets,
       schema: candidateScanJsonSchema,
+      lowResolution: true,
+      hedgeAfterMs: SCAN_HEDGE_AFTER_MS * this.hedgeScale,
       attemptTimeoutMs: Math.min(GEMINI_SCAN_ATTEMPT_TIMEOUT_MS, input.budgetMs),
       totalBudgetMs: input.budgetMs,
       minAttemptMs: MIN_SCAN_ATTEMPT_MS,
@@ -144,11 +158,15 @@ export class GeminiProductExtractionProvider implements ProductExtractionProvide
     return { candidates: parseCandidates(validated.data, new Set(input.sheetLabels.flat()), input.want), model };
   }
 
+  private async generateWithFallback(job: Job): Promise<{ text: string; model: string }> {
+    return job.hedgeAfterMs === undefined ? this.sequential(job) : this.hedged(job);
+  }
+
   /**
    * One attempt per model, in order. Only failures that say "this model is not available right now"
    * move on to the next one; a bad key or a malformed request would fail on every model, so it stops here.
    */
-  private async generateWithFallback(job: Job) {
+  private async sequential(job: Job) {
     const deadline = Date.now() + job.totalBudgetMs;
     let last: ExtractionProviderError | undefined;
 
@@ -163,8 +181,7 @@ export class GeminiProductExtractionProvider implements ProductExtractionProvide
       } catch (error) {
         if (!(error instanceof AttemptError)) throw error;
         last = error.failure;
-        // Model ids are public; the provider's message is never logged because it can echo request details.
-        console.warn("Gemini model skipped", { model, code: error.failure.code, status: error.status ?? "none", ms: Date.now() - startedAt, images: job.images?.length ?? 0 });
+        logSkipped(model, error, startedAt, job);
         if (!error.fallback) throw error.failure;
       }
     }
@@ -172,9 +189,74 @@ export class GeminiProductExtractionProvider implements ProductExtractionProvide
     throw last ?? new ExtractionProviderError("timeout");
   }
 
-  private async attempt(model: string, job: Job, timeoutMs: number) {
+  /**
+   * Same chain, but a slow model does not hold everything up: when the first has not answered after `hedgeAfterMs`, the next
+   * model is started alongside it (never more than two at once) and the first valid answer wins. Image calls vary a lot in
+   * latency (2s to 16s for the same size), and waiting out a timeout before trying again is what made them slow.
+   */
+  private async hedged(job: Job): Promise<{ text: string; model: string }> {
+    const deadline = Date.now() + job.totalBudgetMs;
+    const minAttempt = job.minAttemptMs ?? MIN_ATTEMPT_MS;
+    const models = this.config.models;
+    type Outcome = { ok: true; text: string; model: string } | { ok: false; model: string; error: unknown; startedAt: number };
+
+    let next = 0;
+    let last: ExtractionProviderError | undefined;
+    const running = new Set<Promise<Outcome>>();
+    const aborters: AbortController[] = [];
+
+    const launch = () => {
+      const remaining = deadline - Date.now();
+      if (next >= models.length || remaining < minAttempt) return false;
+      const model = models[next++];
+      const startedAt = Date.now();
+      const external = new AbortController();
+      aborters.push(external);
+      const tracked: Promise<Outcome> = this.attempt(model, job, Math.min(job.attemptTimeoutMs, remaining), external.signal).then(
+        (text): Outcome => ({ ok: true, text, model }),
+        (error): Outcome => ({ ok: false, model, error, startedAt }),
+      ).then((outcome) => {
+        running.delete(tracked);
+        return outcome;
+      });
+      running.add(tracked);
+      return true;
+    };
+
+    if (!launch()) throw new ExtractionProviderError("timeout");
+
+    try {
+      while (running.size > 0) {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const hedge = next < models.length ? new Promise<"hedge">((resolve) => (timer = setTimeout(() => resolve("hedge"), job.hedgeAfterMs))) : undefined;
+        const winner = await Promise.race(hedge ? [...running, hedge] : [...running]);
+        clearTimeout(timer);
+
+        if (winner === "hedge") {
+          if (running.size < 2) launch();
+          continue;
+        }
+        if (winner.ok) return { text: winner.text, model: winner.model };
+
+        if (!(winner.error instanceof AttemptError)) throw winner.error;
+        last = winner.error.failure;
+        logSkipped(winner.model, winner.error, winner.startedAt, job);
+        if (!winner.error.fallback) throw winner.error.failure;
+        // Nothing else is in flight: do not wait for the hedge timer to try the next model.
+        if (running.size === 0) launch();
+      }
+    } finally {
+      // The loser, if any, is no longer needed.
+      for (const aborter of aborters) aborter.abort();
+    }
+
+    throw last ?? new ExtractionProviderError("timeout");
+  }
+
+  private async attempt(model: string, job: Job, timeoutMs: number, external?: AbortSignal) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
+    external?.addEventListener("abort", () => controller.abort(), { once: true });
 
     try {
       const text = await this.generate({
@@ -184,6 +266,7 @@ export class GeminiProductExtractionProvider implements ProductExtractionProvide
         images: job.images,
         imageLabels: job.imageLabels,
         schema: job.schema,
+        lowResolution: job.lowResolution,
         signal: controller.signal,
       });
       if (!text) throw new AttemptError(new ExtractionProviderError("invalid_output"), false);
@@ -194,6 +277,11 @@ export class GeminiProductExtractionProvider implements ProductExtractionProvide
       clearTimeout(timer);
     }
   }
+}
+
+// Model ids are public; the provider's message is never logged because it can echo request details.
+function logSkipped(model: string, error: AttemptError, startedAt: number, job: Job) {
+  console.warn("Gemini model skipped", { model, code: error.failure.code, status: error.status ?? "none", ms: Date.now() - startedAt, images: job.images?.length ?? 0 });
 }
 
 function parseJson(text: string): unknown {
@@ -217,7 +305,7 @@ class AttemptError extends Error {
 function createSdkGenerator(config: GeminiConfig): GenerateJson {
   const client = new GoogleGenAI({ apiKey: config.apiKey });
 
-  return async ({ model, systemInstruction, prompt, signal, images, imageLabels, schema }) => {
+  return async ({ model, systemInstruction, prompt, signal, images, imageLabels, schema, lowResolution }) => {
     const startedAt = Date.now();
     const response = await client.models.generateContent({
       model,
@@ -237,6 +325,7 @@ function createSdkGenerator(config: GeminiConfig): GenerateJson {
         systemInstruction,
         responseMimeType: "application/json",
         responseJsonSchema: schema ?? geminiResponseJsonSchema,
+        ...(lowResolution ? { mediaResolution: "MEDIA_RESOLUTION_MEDIUM" as MediaResolution } : {}),
         abortSignal: signal,
         // The SDK retries 429/5xx with backoff by default. That would burn the per-model budget on one
         // model; the chain is the retry strategy, so each model gets exactly one attempt.

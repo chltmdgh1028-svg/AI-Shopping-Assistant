@@ -1,4 +1,4 @@
-import { ExtractionProviderError, type ImageInput, type ProductExtractionProvider } from "@/services/extraction/aiProvider";
+import { ExtractionProviderError, type ImageExtractionResult, type ImageInput, type ProductExtractionProvider } from "@/services/extraction/aiProvider";
 import type { StageRecord } from "@/services/extraction/adapters/types";
 import { buildContactSheet, SHEET, tileImage, type Tile } from "@/services/extraction/imageProcessing";
 import type { ImageFetchResult } from "@/services/extraction/safeFetch";
@@ -8,10 +8,10 @@ import type { DetailField, MaterialBlend, ProductFacts, ProductSize } from "@/ty
 
 export const VISION_LIMITS = {
   /** Images downloaded to look through. The rest of a very long page is not fetched. */
-  maxImages: 40,
+  maxImages: 24,
   /** Decoded bytes across everything downloaded for the look-through. */
   maxTotalBytes: 30_000_000,
-  fetchBudgetMs: 6_000,
+  fetchBudgetMs: 5_000,
   concurrency: 8,
   /** Up to this many tiles are simply read; more than this and candidates are picked first. */
   directReadMaxTiles: 6,
@@ -20,6 +20,10 @@ export const VISION_LIMITS = {
   /** Tiles sent in one detailed read, and how many reads may run side by side. */
   batchSize: 4,
   maxBatches: 2,
+  /** A page with this few images (or fewer) is read from its clearest tiles, with no scan. */
+  fewImages: 4,
+  /** Longest one close read may take. */
+  detailMaxMs: 20_000,
   /** Below this much time left in the request, the image stage is not started. */
   minBudgetMs: 12_000,
   /** The whole image stage, however much time the request has. */
@@ -111,7 +115,7 @@ export function orderDetailTiles(
   tiles: Tile[],
   candidates: Candidates,
   want: VisionField[],
-  options: { heuristic?: boolean; limit?: number } = {},
+  options: { heuristic?: boolean; limit?: number; exclude?: Tile[] } = {},
 ): Tile[] {
   const limit = options.limit ?? VISION_LIMITS.batchSize * VISION_LIMITS.maxBatches;
   const byLabel = new Map(tiles.map((tile) => [tile.label, tile]));
@@ -120,11 +124,11 @@ export function orderDetailTiles(
     ...(want.includes("sizes") ? candidates.sizes : []),
     ...(want.includes("care") ? candidates.care : []),
   ];
-  const chosen = [...new Set(labels)].flatMap((label) => byLabel.get(label) ?? []);
+  const chosen = [...new Set(labels)].flatMap((label) => byLabel.get(label) ?? []).filter((tile) => !options.exclude?.includes(tile));
   // After a scan, only the clearest tables are added to what the model chose. Without one, looks are all there is.
   const threshold = options.heuristic ? VISION_LIMITS.heuristicScore : VISION_LIMITS.infoScore;
   const extras = options.heuristic ? limit : 2;
-  const clear = [...tiles].filter((tile) => tile.score >= threshold && !chosen.includes(tile)).sort((a, b) => b.score - a.score || byPosition(a, b)).slice(0, extras);
+  const clear = [...tiles].filter((tile) => tile.score >= threshold && !chosen.includes(tile) && !options.exclude?.includes(tile)).sort((a, b) => b.score - a.score || byPosition(a, b)).slice(0, extras);
   return [...chosen, ...clear].slice(0, limit);
 }
 
@@ -199,58 +203,71 @@ export async function runVisionFallback(args: {
     return finish({ ...base, status: "failed", reason: "images_unreadable" }, { warnings: ["상세 이미지를 불러오지 못해 이미지 속 정보는 반영하지 못했어요."] });
   }
 
-  // 2. Choose what to read closely.
-  let candidates: Candidates = { materials: [], sizes: [], care: [] };
+  // 2. Read the best-looking tiles at once, and while that runs let the model choose candidates from contact sheets. Image
+  //    calls vary a lot in latency, so the two are not done one after the other.
+  const readBatch = (batch: Tile[]) => {
+    const budgetMs = Math.min(VISION_LIMITS.detailMaxMs, timeLeft());
+    return provider.extractFromImages!({ url: args.pageUrl, images: batch.map(asInput), labels: batch.map((tile) => tile.label), want, budgetMs });
+  };
+  const emptyCandidates: Candidates = { materials: [], sizes: [], care: [] };
+
+  let candidates: Candidates = emptyCandidates;
   let mode: NonNullable<VisionMeta["mode"]> = "direct";
-  let toRead: Tile[];
+  const rounds: Array<Promise<ImageExtractionResult>> = [];
+  // A read that fails while the scan is still running must not be reported as unhandled; its outcome is collected below.
+  const start = (batch: Tile[]) => {
+    const read = readBatch(batch);
+    read.catch(() => undefined);
+    rounds.push(read);
+  };
+  const detailStarted = Date.now();
 
   if (tiles.length <= VISION_LIMITS.directReadMaxTiles) {
-    toRead = tiles;
+    batchTiles(tiles).slice(0, VISION_LIMITS.maxBatches).forEach(start);
   } else {
-    const cells = pickSheetCells(tiles);
+    const first = orderDetailTiles(tiles, emptyCandidates, want, { heuristic: true, limit: VISION_LIMITS.batchSize });
+    if (first.length > 0) start(first);
+
+    // A page with only a few images has little to choose from: the clearest tiles are enough, no scan.
+    const scan = loaded.length > VISION_LIMITS.fewImages && provider.scanDetailImages ? await scanForCandidates() : undefined;
+    mode = scan ? "scan" : "heuristic";
+    candidates = scan ?? emptyCandidates;
+
+    const second = orderDetailTiles(tiles, candidates, want, { heuristic: !scan, limit: VISION_LIMITS.batchSize, exclude: first });
+    if (second.length > 0 && timeLeft() >= VISION_LIMITS.minDetailMs) start(second);
+  }
+
+  async function scanForCandidates(): Promise<Candidates | undefined> {
     const scanStarted = Date.now();
     try {
-      if (!provider.scanDetailImages) throw new ExtractionProviderError("model");
       const scanBudget = Math.min(VISION_LIMITS.scanBudgetMs, timeLeft() - VISION_LIMITS.minDetailMs);
-      if (scanBudget < 4_000) throw new ExtractionProviderError("timeout");
-
+      if (scanBudget < 4_000) return undefined;
+      const cells = pickSheetCells(tiles);
       const groups = Array.from({ length: Math.ceil(cells.length / SHEET.cellsPerSheet) }, (_, index) => cells.slice(index * SHEET.cellsPerSheet, (index + 1) * SHEET.cellsPerSheet));
       const sheets = await Promise.all(groups.map((group) => buildContactSheet(group.map((tile) => ({ label: tile.label, thumb: tile.thumb })))));
-      const scan = await provider.scanDetailImages({
+      const result = await provider.scanDetailImages!({
         sheets: sheets.map((sheet) => ({ mimeType: "image/jpeg", data: sheet.toString("base64") })),
         sheetLabels: groups.map((group) => group.map((tile) => tile.label)),
         columns: SHEET.columns,
         want,
         budgetMs: scanBudget,
       });
-      candidates = scan.candidates;
-      mode = "scan";
+      return result.candidates;
     } catch {
-      // The pick failed or ran out of time: fall back on how much each tile looks like a table or a notice.
-      mode = "heuristic";
+      // The pick failed or ran out of time: the tiles that look most like a table are read instead.
+      return undefined;
+    } finally {
+      durations.scan = Date.now() - scanStarted;
     }
-    durations.scan = Date.now() - scanStarted;
-    toRead = orderDetailTiles(tiles, candidates, want, { heuristic: mode === "heuristic" });
   }
 
   const meta = { ...base, mode, candidates };
-  if (toRead.length === 0) {
+  if (rounds.length === 0) {
     return finish({ ...meta, status: "no_result", reason: "no_candidates" }, { product: withMeta(product, { ...meta, status: "no_result", reason: "no_candidates" }) });
   }
 
-  // 3. Read the chosen tiles closely, a few at a time.
-  const detailBudget = timeLeft();
-  if (detailBudget < VISION_LIMITS.minDetailMs) {
-    return finish({ ...meta, status: "skipped", reason: "no_time" }, { product: withMeta(product, { ...meta, status: "skipped", reason: "no_time" }), warnings: ["시간이 부족해 상세 이미지 분석은 건너뛰었어요."] });
-  }
-
-  const detailStarted = Date.now();
-  const batches = batchTiles(toRead).slice(0, VISION_LIMITS.maxBatches);
-  const settled = await Promise.allSettled(
-    batches.map((batch) =>
-      provider.extractFromImages!({ url: args.pageUrl, images: batch.map(asInput), labels: batch.map((tile) => tile.label), want, budgetMs: detailBudget }),
-    ),
-  );
+  // 3. Whatever has come back is used; one failed read does not spoil the other.
+  const settled = await Promise.allSettled(rounds);
   durations.detail = Date.now() - detailStarted;
 
   const results = settled.flatMap((item) => (item.status === "fulfilled" ? [item.value] : []));
@@ -265,7 +282,7 @@ export async function runVisionFallback(args: {
   const sizes: ProductSize[] = [];
   for (const row of results.flatMap((result) => result.sizes)) if (!sizes.some((existing) => existing.name === row.name)) sizes.push(row);
   const care = [...new Set(results.flatMap((result) => result.careInstructions))].slice(0, 8);
-  const evidence: VisionEvidence[] = results.flatMap((result) => result.evidence);
+  const evidence: VisionEvidence[] = results.flatMap((result) => result.evidence).filter((item, position, all) => all.findIndex((other) => other.field === item.field && other.imageIndex === item.imageIndex && other.tileIndex === item.tileIndex) === position);
   const model = results[0].model;
 
   const filled: Array<"materials" | "sizes" | "care"> = [];

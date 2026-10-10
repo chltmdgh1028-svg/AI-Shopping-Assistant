@@ -131,12 +131,16 @@ describe("finding the images worth reading", () => {
     const sheetMeta = await sharp(Buffer.from(scan.sheets[0].data, "base64")).metadata();
     expect(sheetMeta.format).toBe("jpeg");
 
-    // Then one close read of the chosen tiles: the blend candidate first, then the size candidate (plus the clearest table).
-    expect(extractFromImages).toHaveBeenCalledTimes(1);
-    const read = extractFromImages.mock.calls[0][0];
-    expect(read.labels?.slice(0, 2)).toEqual(["19-2", "17"]);
-    expect(read.labels?.length).toBeLessThanOrEqual(VISION_LIMITS.batchSize);
-    expect(read.images.length).toBe(read.labels?.length);
+    // The clearest tiles are read right away, while the scan runs; what the scan chose that is not among them is read next.
+    expect(extractFromImages.mock.calls.length).toBeGreaterThanOrEqual(1);
+    expect(extractFromImages.mock.calls.length).toBeLessThanOrEqual(VISION_LIMITS.maxBatches);
+    const labelsRead = extractFromImages.mock.calls.flatMap(([call]) => call.labels ?? []);
+    expect(labelsRead).toEqual(expect.arrayContaining(["19-2", "17"]));
+    expect(new Set(labelsRead).size).toBe(labelsRead.length); // nothing is read twice
+    for (const [call] of extractFromImages.mock.calls) {
+      expect(call.labels?.length).toBeLessThanOrEqual(VISION_LIMITS.batchSize);
+      expect(call.images.length).toBe(call.labels?.length);
+    }
 
     expect(outcome.product.extractionMetadata?.vision).toMatchObject({
       status: "used",
@@ -153,7 +157,7 @@ describe("finding the images worth reading", () => {
       detail: { materials: cotton, evidence: [{ field: "materials", imageIndex: 19, tileIndex: 2, confidence: "medium" }] },
     });
     const outcome = await run({ product: baseProduct({ sizes: freeSize, careInstructions: ["x 세탁"] }), count: 24, images: await lookbook(), provider: model });
-    expect(extractFromImages.mock.calls[0][0].labels?.[0]).toBe("19-2");
+    expect(extractFromImages.mock.calls.flatMap(([call]) => call.labels ?? [])).toContain("19-2");
     expect(outcome.product.extractionMetadata?.vision?.evidence).toEqual([{ field: "materials", imageIndex: 19, tileIndex: 2, confidence: "medium" }]);
     expect(outcome.product.extractionMetadata?.vision?.tiles).toBeGreaterThan(24);
   });
@@ -199,6 +203,77 @@ describe("finding the images worth reading", () => {
     await run({ count: 14, images, provider: model });
     expect(extractFromImages.mock.calls.length).toBeLessThanOrEqual(VISION_LIMITS.maxBatches);
     for (const [call] of extractFromImages.mock.calls) expect(call.images.length).toBeLessThanOrEqual(VISION_LIMITS.batchSize);
+  });
+});
+
+describe("not waiting in line", () => {
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  it("reads the clearest tiles while the scan is still running", async () => {
+    const order: string[] = [];
+    const model = provider({ scan: { materials: ["19-2"], sizes: [], care: [] }, detail: { materials: cotton } });
+    model.scanDetailImages.mockImplementation(async () => {
+      order.push("scan start");
+      await sleep(300);
+      order.push("scan end");
+      return { candidates: { materials: ["19-2"], sizes: [], care: [] }, model: "m" };
+    });
+    model.extractFromImages.mockImplementation(async (input) => {
+      order.push(`read ${input.labels?.[0]}`);
+      await sleep(300);
+      return { materials: cotton, sizes: [], careInstructions: [], confidence: "medium" as const, warnings: [], evidence: [], model: "m" };
+    });
+
+    const started = Date.now();
+    await run({ count: 24, images: await lookbook(), provider: model.provider });
+    const elapsed = Date.now() - started;
+
+    // Both are under way before either has finished, so the pair costs about one latency, not two.
+    expect(order.indexOf("scan start")).toBeGreaterThanOrEqual(0);
+    expect(order.findIndex((entry) => entry.startsWith("read"))).toBeGreaterThanOrEqual(0);
+    expect(order.findIndex((entry) => entry.startsWith("read"))).toBeLessThan(order.indexOf("scan end"));
+    expect(order.indexOf("scan start")).toBeLessThan(order.indexOf("scan end"));
+    expect(elapsed).toBeLessThan(1500);
+  });
+
+  it("reads a page with only a few images from its clearest tiles, with no scan", async () => {
+    const images: Record<number, Buffer> = {};
+    images[1] = await table(860, 4200);
+    images[2] = await table(860, 3000);
+    const model = provider({ detail: { materials: cotton } });
+    const outcome = await run({ count: 2, images, provider: model.provider });
+    expect(model.scanDetailImages).not.toHaveBeenCalled();
+    expect(model.extractFromImages).toHaveBeenCalled();
+    expect(outcome.product.extractionMetadata?.vision?.mode).toBe("heuristic");
+    expect(outcome.product.materials.length).toBeGreaterThan(0);
+  });
+
+  it("keeps what one read found when the other fails", async () => {
+    const model = provider({ scan: { materials: ["19-2"], sizes: [], care: [] } });
+    let call = 0;
+    model.extractFromImages.mockImplementation(async () => {
+      call += 1;
+      if (call === 1) throw new ExtractionProviderError("timeout");
+      return { materials: cotton, sizes: [], careInstructions: [], confidence: "medium" as const, warnings: [], evidence: [], model: "m" };
+    });
+    const outcome = await run({ count: 24, images: await lookbook(), provider: model.provider });
+    expect(outcome.product.materials.map((item) => item.name)).toEqual(["Cotton", "Polyester"]);
+    expect(outcome.product.extractionMetadata?.vision?.status).toBe("used");
+  });
+
+  it("does not leave a failing read unhandled while it waits for the scan", async () => {
+    const unhandled: unknown[] = [];
+    const listener = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", listener);
+    const model = provider({ detail: new ExtractionProviderError("quota") });
+    model.scanDetailImages.mockImplementation(async () => {
+      await sleep(100);
+      return { candidates: { materials: [], sizes: [], care: [] }, model: "m" };
+    });
+    await run({ count: 24, images: await lookbook(), provider: model.provider });
+    await sleep(50);
+    process.off("unhandledRejection", listener);
+    expect(unhandled).toEqual([]);
   });
 });
 

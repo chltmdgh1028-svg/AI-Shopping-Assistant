@@ -324,4 +324,96 @@ describe("GeminiProductExtractionProvider", () => {
       expect(Date.now() - started).toBeLessThan(6_000);
     }, 10_000);
   });
+
+  describe("hedging slow image calls", () => {
+    const sheet = { mimeType: "image/jpeg", data: "SHEET" };
+    const scan = { sheets: [sheet], sheetLabels: [["1", "2"]], columns: 4, want: ["materials" as const], budgetMs: 10_000 };
+    const answer = JSON.stringify({ materialCandidates: ["1"], sizeCandidates: [], careCandidates: [] });
+    // Hedge delay 4000ms * 0.01 = 40ms.
+    const hedged = (generate: GenerateJson) => new GeminiProductExtractionProvider(config, generate, undefined, undefined, 0.01);
+    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+    it("starts the next model beside a slow one and takes whichever answers first", async () => {
+      const started: string[] = [];
+      const generate: GenerateJson = async ({ model, signal }) => {
+        started.push(model);
+        if (model === "model-a") {
+          await new Promise((resolve, reject) => {
+            const timer = setTimeout(resolve, 400);
+            signal.addEventListener("abort", () => {
+              clearTimeout(timer);
+              reject(new Error("aborted"));
+            });
+          });
+        } else {
+          await sleep(20);
+        }
+        return answer;
+      };
+      const began = Date.now();
+      const result = await hedged(generate).scanDetailImages(scan);
+      expect(result.model).toBe("model-b");
+      expect(started).toEqual(["model-a", "model-b"]);
+      expect(Date.now() - began).toBeLessThan(300);
+    });
+
+    it("does not start a second model when the first answers in time", async () => {
+      const generate = vi.fn<GenerateJson>(async () => {
+        await sleep(5);
+        return answer;
+      });
+      const result = await hedged(generate).scanDetailImages(scan);
+      expect(result.model).toBe("model-a");
+      await sleep(80);
+      expect(generate).toHaveBeenCalledTimes(1);
+    });
+
+    it("moves on at once when the first model is unavailable, without waiting for the hedge delay", async () => {
+      const spy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      const generate: GenerateJson = async ({ model }) => {
+        if (model === "model-a") throw Object.assign(new Error("x"), { status: 503 });
+        return answer;
+      };
+      const provider = new GeminiProductExtractionProvider(config, generate, undefined, undefined, 1);
+      const began = Date.now();
+      const result = await provider.scanDetailImages({ ...scan, budgetMs: 30_000 });
+      expect(result.model).toBe("model-b");
+      expect(Date.now() - began).toBeLessThan(1000);
+      spy.mockRestore();
+    });
+
+    it("never runs more than two models at the same time", async () => {
+      let active = 0;
+      let peak = 0;
+      const generate: GenerateJson = async ({ signal }) => {
+        active += 1;
+        peak = Math.max(peak, active);
+        try {
+          await new Promise((resolve, reject) => {
+            const timer = setTimeout(resolve, 250);
+            signal.addEventListener("abort", () => {
+              clearTimeout(timer);
+              reject(new Error("aborted"));
+            });
+          });
+          return answer;
+        } finally {
+          active -= 1;
+        }
+      };
+      await hedged(generate).scanDetailImages(scan);
+      expect(peak).toBeLessThanOrEqual(2);
+    });
+
+    it("stops everything at once on an error that would fail on every model", async () => {
+      const spy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      const generate: GenerateJson = async ({ model }) => {
+        if (model === "model-a") throw Object.assign(new Error("API key not valid"), { status: 400 });
+        await sleep(200);
+        return answer;
+      };
+      await expect(hedged(generate).scanDetailImages(scan)).rejects.toMatchObject({ code: "auth" });
+      spy.mockRestore();
+    });
+  });
 });
