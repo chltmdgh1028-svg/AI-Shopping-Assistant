@@ -9,6 +9,7 @@ export const sourcePriority: readonly EvidenceSource[] = [
   "product-page", // 1. other explicit statements on the page
   "structured-data", // 2. JSON-LD / meta
   "ai-extraction", // 3. read from the page text by the model and checked against it
+  "image-vision", // 3. read from a detail-page image by a vision model: plausibility-checked only
   "material-knowledge", // 4. general knowledge about the fibers
   "generic", // 5. nothing specific: a neutral fallback
 ];

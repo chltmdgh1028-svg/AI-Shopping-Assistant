@@ -1,5 +1,5 @@
 import { getGeminiConfig } from "@/lib/env";
-import type { ProductFacts } from "@/types/shopping";
+import type { ExtractionConfidence, MaterialBlend, ProductFacts, ProductSize } from "@/types/shopping";
 
 export type PageExtractionInput = {
   url: string;
@@ -9,8 +9,30 @@ export type PageExtractionInput = {
   structuredProduct?: Partial<ProductFacts>;
 };
 
+/** One image for a vision model: raw bytes as base64, with its MIME type. */
+export type ImageInput = { mimeType: string; data: string };
+
+export type ImageExtractionInput = {
+  url: string;
+  images: ImageInput[];
+  /** What the text left empty. The model is asked for all three but only these may be used. */
+  want: Array<"materials" | "sizes" | "care">;
+  budgetMs: number;
+};
+
+export type ImageExtractionResult = {
+  materials: MaterialBlend[];
+  sizes: ProductSize[];
+  careInstructions: string[];
+  confidence: ExtractionConfidence;
+  warnings: string[];
+  model?: string;
+};
+
 export type ProductExtractionProvider = {
   extract(input: PageExtractionInput): Promise<AiExtractionResult>;
+  /** Reads detail-page images when the text had no blend or size table. Optional: not every provider can see. */
+  extractFromImages?(input: ImageExtractionInput): Promise<ImageExtractionResult>;
   isAvailable(): boolean;
   providerName: "unavailable" | "mock" | "gemini";
 };

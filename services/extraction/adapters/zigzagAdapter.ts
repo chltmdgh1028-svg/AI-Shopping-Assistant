@@ -1,8 +1,10 @@
+import { looksLikeCareInstruction } from "@/domain/careSignals";
 import { readMaterialShares } from "@/domain/materialParsing";
 import { buildPricing, formatPriceLabel } from "@/domain/pricing";
 import { categorize, extractFit, extractSizes } from "@/services/extraction/htmlExtraction";
-import type { ProductAdapterResult } from "@/services/extraction/adapters/types";
-import type { ProductSize } from "@/types/shopping";
+import type { AdapterEnrichment, ProductAdapterResult } from "@/services/extraction/adapters/types";
+import { fetchZigzagSizes, type JsonPoster } from "@/services/extraction/adapters/zigzagDetailApi";
+import type { DetailField, ProductSize } from "@/types/shopping";
 
 type Json = Record<string, unknown>;
 
@@ -52,6 +54,27 @@ function htmlToLines(html: string) {
     .join("\n");
 }
 
+const imageAttributes = ["ec-data-src", "data-src", "data-original", "src"];
+// Icons, spacers and animated GIFs never carry a size table.
+const notADetailImage = /\.(?:svg|gif)(?:[?#]|$)|icon|logo|sprite|spacer|pixel|blank|badge|btn_|button/i;
+
+function attribute(tag: string, name: string) {
+  return tag.match(new RegExp(`\\s${name}\\s*=\\s*["']([^"']+)["']`, "i"))?.[1];
+}
+
+/** The seller's detail page is mostly images; sizes and fabric are often printed on them. Only https images are kept. */
+function collectDetailImages(html: string) {
+  const urls: string[] = [];
+  for (const tag of html.matchAll(/<img\b[^>]*>/gi)) {
+    const raw = imageAttributes.map((name) => attribute(tag[0], name)).find(Boolean);
+    if (!raw) continue;
+    const url = decodeEntities(raw.trim()).replace(/^\/\//, "https://");
+    if (!/^https:\/\//i.test(url) || notADetailImage.test(url) || urls.includes(url)) continue;
+    urls.push(url);
+  }
+  return urls.slice(0, 60);
+}
+
 const number = "(\\d+(?:\\.\\d+)?)";
 
 /**
@@ -86,21 +109,56 @@ function readFlatSize(lines: string): { size: ProductSize; flat: boolean } | und
   };
 }
 
-// Only lines that tell the buyer what to do count. "소재별 세탁 가이드 바로가기" is a link to a guide, not an instruction.
-const careLine = /손세탁|단독\s*세탁|세탁기|드라이\s*클리닝|건조기|그늘|자연\s*건조|표백|비틀|다림질|울\s*코스|찬물|중성\s*세제/;
 function readCareLines(lines: string) {
   return lines
     .split("\n")
-    .filter((line) => line.length <= 80 && careLine.test(line) && !/바로가기|가이드|https?:|공지/.test(line))
+    .filter((line) => looksLikeCareInstruction(line))
     .slice(0, 8);
 }
+
+async function enrichSizes(productId: string, apiBase: string | undefined, post: JsonPoster): Promise<AdapterEnrichment | undefined> {
+  const found = await fetchZigzagSizes(productId, apiBase, post);
+  if (!found) return undefined;
+  return { product: { sizes: found.sizes }, warnings: found.warnings, stage: { source: "zigzag-detail-api", fields: ["sizes"] } };
+}
+
+type Notice = { name: string; value: string };
+
+// "상세정보 참고", "상품상세참조", "해당없음": the field exists but says to look elsewhere, so it carries no fact.
+const pointsElsewhere = /상세|참조|참고|해당\s*없음|^-+$/;
+
+/**
+ * The collapsed "상품정보 제공고시" list (and the older product_info_map) is already part of the page's data, so it is read
+ * without clicking anything. Entries that only point to the detail page are dropped.
+ */
+function readNotices(product: Json): Notice[] {
+  const notices: Notice[] = [];
+  const add = (name: unknown, value: unknown) => {
+    const label = text(name);
+    const body = typeof value === "string" ? htmlToLines(value).replace(/\n/g, " ").trim() : typeof value === "number" ? String(value) : "";
+    if (!label || !body || body.length > 300) return;
+    if (body.length <= 20 && pointsElsewhere.test(body)) return;
+    notices.push({ name: label, value: body });
+  };
+
+  for (const entry of Array.isArray(product.essentials) ? product.essentials : []) add(at(entry, "name"), at(entry, "value"));
+
+  const map = product.product_info_map;
+  if (Array.isArray(map)) for (const entry of map) add(at(entry, "name") ?? at(entry, "title") ?? at(entry, "key"), at(entry, "value"));
+  else if (isRecord(map)) for (const [name, value] of Object.entries(map)) add(name, value);
+
+  return notices;
+}
+
+const noticeFor = (notices: Notice[], pattern: RegExp) => notices.filter((notice) => pattern.test(notice.name));
 
 /**
  * Zigzag product pages ship the product as JSON inside the HTML (Next.js __NEXT_DATA__): price, images and the seller's
  * full description, none of which is visible text. This reads that data directly, so no browser rendering is needed.
  */
 export function extractZigzagProduct(html: string): ProductAdapterResult | undefined {
-  const queries = at(readNextData(html), "props", "pageProps", "dehydratedState", "queries");
+  const nextData = readNextData(html);
+  const queries = at(nextData, "props", "pageProps", "dehydratedState", "queries");
   if (!Array.isArray(queries)) return undefined;
 
   const query = queries.find((item) => Array.isArray(at(item, "queryKey")) && (at(item, "queryKey") as unknown[])[0] === "getPdpBaseInfo");
@@ -130,19 +188,37 @@ export function extractZigzagProduct(html: string): ProductAdapterResult | undef
   const categories = (Array.isArray(product.category_list) ? product.category_list : []).map((item) => text(at(item, "value")) ?? "").join(" ");
   const detail = htmlToLines(typeof product.description === "string" ? product.description : "").slice(0, MAX_DETAIL_CHARS);
 
-  const materials = readMaterialShares(detail, "structured-data", "medium");
-  const tableSizes = extractSizes(detail);
-  const flatSize = tableSizes.length === 0 ? readFlatSize(detail) : undefined;
+  const notices = readNotices(product);
+  const noticeText = notices.map((notice) => `${notice.name}: ${notice.value}`).join("\n");
+  // The notice list is a labelled field ("제품소재"), so it is preferred; the seller's free text fills in when it is silent.
+  const noticeMaterials = noticeFor(notices, /소재|재질|혼용|fabric|material/i).flatMap((notice) => readMaterialShares(notice.value, "structured-data", "medium"));
+  const materials = noticeMaterials.length > 0 ? noticeMaterials : readMaterialShares(detail, "structured-data", "medium");
+  const noticeSizeText = noticeFor(notices, /치수|사이즈|size/i).map((notice) => notice.value).join("\n");
+  const sizeText = [detail, noticeSizeText].filter(Boolean).join("\n");
+  const tableSizes = extractSizes(sizeText);
+  const flatSize = tableSizes.length === 0 ? readFlatSize(sizeText) : undefined;
   const sizes = tableSizes.length > 0 ? tableSizes : flatSize ? [flatSize.size] : [];
-  const care = readCareLines(detail);
+  const noticeCare = noticeFor(notices, /세탁|취급|관리|care/i).flatMap((notice) => notice.value.split(/[,;·/\n]+/).map((part) => part.trim()));
+  const care = [...new Set([...readCareLines(detail), ...noticeCare.filter((line) => looksLikeCareInstruction(line))])].slice(0, 8);
 
   const warnings: string[] = [];
   if (flatSize?.flat) warnings.push(`가슴 치수 ${(flatSize.size.chest ?? 0) / 2}cm는 단면 기준으로 보고 둘레 ${flatSize.size.chest}cm로 환산했어요.`);
+
+  const productId = text(product.id) ?? (typeof product.id === "number" ? String(product.id) : undefined);
+  const apiBase = text(at(nextData, "runtimeConfig", "config", "apiConsumerBaseUrl"));
+  const foundFields: DetailField[] = [
+    ...(pricing ? (["price"] as const) : []),
+    ...(images.length ? (["images"] as const) : []),
+    ...(materials.length ? (["materials"] as const) : []),
+    ...(sizes.length ? (["sizes"] as const) : []),
+    ...(care.length ? (["care"] as const) : []),
+  ];
 
   const summary = [
     `상품명: ${name}`,
     brand ? `판매처: ${brand}` : undefined,
     pricing ? `판매가: ${formatPriceLabel(pricing.currentPrice, pricing.currency)}${pricing.originalPrice ? ` (정가 ${formatPriceLabel(pricing.originalPrice, pricing.currency)})` : ""}` : undefined,
+    noticeText ? `상품정보 제공고시:\n${noticeText}` : undefined,
     detail ? `상세 설명:\n${detail}` : undefined,
   ]
     .filter(Boolean)
@@ -152,6 +228,10 @@ export function extractZigzagProduct(html: string): ProductAdapterResult | undef
     adapter: "zigzag",
     text: summary,
     warnings,
+    detailImageUrls: collectDetailImages(typeof product.description === "string" ? product.description : ""),
+    stage: { source: "zigzag-next-data", fields: foundFields },
+    // The size tab loads on click, from the site's own API. Only asked for when the page data held no size.
+    enrich: sizes.length > 0 || !productId ? undefined : (post) => enrichSizes(productId, apiBase, post),
     product: {
       productName: name,
       brand,

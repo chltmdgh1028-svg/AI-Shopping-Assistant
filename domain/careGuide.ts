@@ -16,7 +16,8 @@ export function buildCareGuide(product: ProductFacts, material: MaterialEvaluati
   const text = (...kinds: string[]) => manufacturer.filter((item) => kinds.includes(item.kind)).map((item) => item.text).join(", ");
 
   const { washEase, dryerSafe } = evaluation.metrics;
-  const fromLabel = (metric: typeof washEase) => metric.available && metric.source === "manufacturer-care";
+  // A label read from text or from an image: both are the seller's own instruction.
+  const fromLabel = (metric: typeof washEase) => metric.available && (metric.source === "manufacturer-care" || metric.source === "image-vision");
 
   const dryer: CareGuide["dryer"] = !fromLabel(dryerSafe) ? "unknown" : dryerSafe.score >= 68 ? "allowed" : "not_recommended";
   const washing_effort: CareGuide["washing_effort"] = !fromLabel(washEase) ? "unknown" : washEase.score >= 75 ? "easy" : washEase.score >= 45 ? "moderate" : "demanding";
@@ -56,5 +57,6 @@ export function buildCareGuide(product: ProductFacts, material: MaterialEvaluati
     inferred,
     dryer,
     washing_effort,
+    fromImage: product.extractionMetadata?.vision?.fields.includes("care") || undefined,
   };
 }

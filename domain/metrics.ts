@@ -105,6 +105,12 @@ const firstOfKind = (items: ReturnType<typeof parseManufacturerCare>, kinds: str
  */
 export function evaluateMaterialMetrics(product: ProductFacts): MaterialMetricMap {
   const blend = readBlend(product);
+  // Care instructions printed on a detail image and read by a vision model are still the seller's own words, but a model
+  // read them, so they count as reference-level (medium), not as a firm label.
+  const careFromImage = product.extractionMetadata?.vision?.fields.includes("care") ?? false;
+  const careSource: EvidenceSource = careFromImage ? "image-vision" : "manufacturer-care";
+  const careConfidence: ExtractionConfidence = careFromImage ? "medium" : "high";
+  const imageSuffix = careFromImage ? " 상세 이미지에서 AI가 읽은 안내예요." : "";
   const care = readCareSignals(product.careInstructions);
   const careItems = parseManufacturerCare(product.careInstructions);
   const claims = readFeatureClaims([product.productName, product.description, ...(product.careInstructions ?? [])].join(" "));
@@ -114,34 +120,34 @@ export function evaluateMaterialMetrics(product: ProductFacts): MaterialMetricMa
   const washText = firstOfKind(careItems, ["washing", "dry_clean"]);
   const washFromPage =
     care.wash !== undefined
-      ? metric("washEase", "manufacturer-care", {
+      ? metric("washEase", careSource, {
           available: true,
           score: washScore[care.wash],
-          confidence: "high",
-          reason: washReason(care.wash, washText ?? "세탁 안내"),
+          confidence: careConfidence,
+          reason: washReason(care.wash, washText ?? "세탁 안내") + imageSuffix,
         })
       : undefined;
 
   const dryText = firstOfKind(careItems, ["drying"]);
   const dryerFromPage =
     care.dryer === "allowed"
-      ? metric("dryerSafe", "manufacturer-care", { available: true, score: 85, confidence: "high", reason: "상품 페이지에서 건조기 사용이 가능하다고 안내해요." })
+      ? metric("dryerSafe", careSource, { available: true, score: 85, confidence: careConfidence, reason: `상품 페이지에서 건조기 사용이 가능하다고 안내해요.${imageSuffix}` })
       : care.dryer === "forbidden"
-        ? metric("dryerSafe", "manufacturer-care", { available: true, score: 8, confidence: "high", reason: "상품 페이지에서 건조기 사용을 금지해요." })
+        ? metric("dryerSafe", careSource, { available: true, score: 8, confidence: careConfidence, reason: `상품 페이지에서 건조기 사용을 금지해요.${imageSuffix}` })
         : care.dryer === "natural_only"
-          ? metric("dryerSafe", "manufacturer-care", {
+          ? metric("dryerSafe", careSource, {
               available: true,
               score: 12,
-              confidence: "high",
-              reason: `상품 페이지에서 “${dryText ?? "자연 건조"}” 지침을 확인했어요. 건조기는 권장되지 않아요.`,
+              confidence: careConfidence,
+              reason: `상품 페이지에서 “${dryText ?? "자연 건조"}” 지침을 확인했어요. 건조기는 권장되지 않아요.${imageSuffix}`,
             })
           : undefined;
 
   const wrinkleFromPage =
     care.wrinkle === "low_maintenance"
-      ? metric("wrinkleResistance", "manufacturer-care", { available: true, score: 85, confidence: "high", reason: "상품 안내에 구김이 적다는 설명이 있어요." })
+      ? metric("wrinkleResistance", careSource, { available: true, score: 85, confidence: careConfidence, reason: `상품 안내에 구김이 적다는 설명이 있어요.${imageSuffix}` })
       : care.wrinkle === "wrinkles_easily"
-        ? metric("wrinkleResistance", "manufacturer-care", { available: true, score: 25, confidence: "high", reason: "상품 안내에 구김 주의 또는 다림질 설명이 있어요." })
+        ? metric("wrinkleResistance", careSource, { available: true, score: 25, confidence: careConfidence, reason: `상품 안내에 구김 주의 또는 다림질 설명이 있어요.${imageSuffix}` })
         : undefined;
 
   const fiberWash = fromFibers("washEase", blend, fromTraits("careEase"));
@@ -192,7 +198,7 @@ export function evaluateMaterialMetrics(product: ProductFacts): MaterialMetricMa
     pillingResistance: pickBySource([pillingFromClaim, pillingFromFibers]) ?? pillingFromFibers,
     wrinkleResistance: pickBySource([wrinkleFromPage, fiberWrinkle]) ?? fiberWrinkle,
     durability: fromFibers("durability", blend, fromTraits("durability")),
-    naturalFiberRatio: naturalFiberMetric(blend),
+    naturalFiberRatio: naturalFiberMetric(blend, product.materials.some((item) => item.source === "image-vision")),
   };
 }
 
@@ -204,7 +210,7 @@ function withNote(result: MetricResult, note: string): MetricResult {
 // It counts for part of a natural fiber: enough to show it is plant based, not enough to equal one.
 const CELLULOSIC_WEIGHT = 0.4;
 
-function naturalFiberMetric(blend: Blend): MetricResult {
+function naturalFiberMetric(blend: Blend, fromImage: boolean): MetricResult {
   const confidence = inferenceConfidence(blend.knownShare);
   const natural = blend.classShare("natural");
   const cellulosic = blend.classShare("regenerated-cellulosic");
@@ -222,10 +228,11 @@ function naturalFiberMetric(blend: Blend): MetricResult {
   ].filter(Boolean);
 
   // The share is read straight off the page's blend, so it is as reliable as the blend itself.
-  return metric("naturalFiberRatio", "product-page", {
+  // A blend read from an image by a model is a reference value, never a firm one.
+  return metric("naturalFiberRatio", fromImage ? "image-vision" : "product-page", {
     available: true,
     score,
-    confidence: confidence === "medium" ? "high" : "low",
-    reason: `${parts.join(" ")}${confidence === "low" ? " 일부 소재 정보가 부족해 참고용이에요." : ""}`,
+    confidence: fromImage ? (confidence === "medium" ? "medium" : "low") : confidence === "medium" ? "high" : "low",
+    reason: `${parts.join(" ")}${fromImage ? " 상세 이미지에서 AI가 읽은 혼용률이에요." : ""}${confidence === "low" ? " 일부 소재 정보가 부족해 참고용이에요." : ""}`,
   });
 }

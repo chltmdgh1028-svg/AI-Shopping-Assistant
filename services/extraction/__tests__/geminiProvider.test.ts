@@ -219,4 +219,69 @@ describe("GeminiProductExtractionProvider", () => {
       spy.mockRestore();
     });
   });
+
+  describe("reading images", () => {
+    const images = [
+      { mimeType: "image/jpeg", data: "AAAA" },
+      { mimeType: "image/png", data: "BBBB" },
+    ];
+    const visionAnswer = JSON.stringify({
+      readability: "clear",
+      materials: [
+        { name: "Cotton", percentage: 60 },
+        { name: "Polyester", percentage: 40 },
+      ],
+      sizes: [{ name: "M", shoulder: null, chest: 100, waist: null, hip: null, length: 65, sleeve: null, unit: "cm", chestIsFlatWidth: false }],
+      careInstructions: ["단독 손세탁"],
+    });
+    const request = { url: "https://zigzag.kr/p/1", images, want: ["materials" as const, "sizes" as const, "care" as const], budgetMs: 10_000 };
+
+    it("sends the images, the vision instruction and the vision schema, then maps the answer as image-vision", async () => {
+      const generate = vi.fn<GenerateJson>(async () => visionAnswer);
+      const result = await providerWith(generate).extractFromImages(request);
+
+      const sent = generate.mock.calls[0][0];
+      expect(sent.images).toEqual(images);
+      expect(sent.systemInstruction).toContain("untrusted");
+      expect(sent.systemInstruction).toContain("size table");
+      expect(sent.schema).toMatchObject({ required: expect.arrayContaining(["readability", "materials"]) });
+      expect(sent.prompt).toContain("2 images");
+
+      expect(result.model).toBe("model-a");
+      expect(result.materials.map((item) => `${item.name} ${item.percentage} ${item.source}`)).toEqual(["Cotton 60 image-vision", "Polyester 40 image-vision"]);
+      expect(result.sizes[0]).toMatchObject({ name: "M", chest: 100, source: "image-vision" });
+      expect(result.careInstructions).toEqual(["단독 손세탁"]);
+      expect(result.confidence).toBe("medium");
+    });
+
+    it("uses the same model chain: a rate-limited model hands over to the next", async () => {
+      const spy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      const tried: string[] = [];
+      const generate: GenerateJson = async ({ model }) => {
+        tried.push(model);
+        if (model === "model-a") throw Object.assign(new Error("x"), { status: 429 });
+        return visionAnswer;
+      };
+      const result = await providerWith(generate).extractFromImages(request);
+      expect(tried).toEqual(["model-a", "model-b"]);
+      expect(result.model).toBe("model-b");
+      spy.mockRestore();
+    });
+
+    it("rejects an answer that is not in the vision shape, without trying other models", async () => {
+      const tried: string[] = [];
+      const generate: GenerateJson = async ({ model }) => {
+        tried.push(model);
+        return JSON.stringify({ productName: "x" });
+      };
+      await expect(providerWith(generate).extractFromImages(request)).rejects.toMatchObject({ code: "invalid_output" });
+      expect(tried).toEqual(["model-a"]);
+    });
+
+    it("never puts the API key in what it sends", async () => {
+      const generate = vi.fn<GenerateJson>(async () => visionAnswer);
+      await providerWith(generate).extractFromImages(request);
+      expect(JSON.stringify(generate.mock.calls[0][0])).not.toContain("test-key-not-real");
+    });
+  });
 });

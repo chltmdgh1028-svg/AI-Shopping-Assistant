@@ -3,7 +3,14 @@ export type FitPreference = "slim" | "regular" | "relaxed" | "oversized";
 export type PreferenceCategory = "comfort" | "function" | "care" | "buying";
 // Where a value came from. "page"/"structured-data"/"meta" were read from the product page; "gemini-extracted"
 // was structured by Gemini from page text and checked against it; "inferred" is a general estimate.
-export type ExtractionSource = "structured-data" | "meta" | "page" | "gemini-extracted" | "inferred" | "user-input" | "demo";
+// "image-vision" = read by a vision model from a detail-page image, not from text: always a reference value.
+export type ExtractionSource = "structured-data" | "meta" | "page" | "gemini-extracted" | "image-vision" | "inferred" | "user-input" | "demo";
+// Where a detail came from, in the order the stages run. "Next data" is the page's own serialized state (it already
+// holds collapsed sections such as the product-notice list); "detail API" is the call the page makes for a tab that loads
+// on click; "image vision" is a model reading the detail-page images.
+export type DetailSource = "zigzag-next-data" | "zigzag-detail-api" | "product-detail-image-vision";
+export type DetailField = "price" | "images" | "materials" | "sizes" | "care";
+
 export type ExtractionConfidence = "high" | "medium" | "low";
 // Each preference is scored by exactly one metric (see data/preferences.ts), so no two choices count the same thing.
 // Retired ids (avoid_itchy, quality_first) only exist in old saved data; see domain/preferenceMigration.ts.
@@ -43,7 +50,7 @@ export type MetricBasis = "product_page" | "material_inference" | "price_and_mat
 
 // Where a judgement comes from, strongest first. When two sources disagree the earlier one wins
 // (domain/sourcePriority.ts): a care label that says "dry in shade" beats "polyester dries fast".
-export type EvidenceSource = "manufacturer-care" | "product-page" | "structured-data" | "ai-extraction" | "material-knowledge" | "generic";
+export type EvidenceSource = "manufacturer-care" | "product-page" | "structured-data" | "ai-extraction" | "image-vision" | "material-knowledge" | "generic";
 
 /**
  * The one evaluation of a metric. The preference list, the care section, the summary and the compatibility
@@ -140,7 +147,7 @@ export type ProductFacts = {
   sourceUrl?: string;
   factsSource: "product_page" | "manual_input" | "demo";
   extractionMetadata?: {
-    strategy: Array<"json-ld" | "meta" | "semantic-html" | "page-text" | "hydration" | "ai-adapter" | "manual" | "demo">;
+    strategy: Array<"json-ld" | "meta" | "semantic-html" | "page-text" | "hydration" | "ai-adapter" | "image-vision" | "manual" | "demo">;
     status: "complete" | "partial" | "failed" | "mock";
     confidence: ExtractionConfidence;
     aiProvider: "unavailable" | "mock" | "gemini";
@@ -156,6 +163,18 @@ export type ProductFacts = {
       redirectCount: number;
       extractedProductId?: string;
       derivedFromId?: boolean;
+    };
+    /** Which stage supplied which fields, in the order they ran. Later stages only fill what earlier ones left empty. */
+    detailSources?: Array<{ source: DetailSource; fields: DetailField[] }>;
+    /** Detail-image reading (vision) fallback: what it was asked, what it filled, and what it cost. */
+    vision?: {
+      status: "used" | "no_result" | "skipped" | "failed";
+      /** Only fields that text had left empty are ever filled from images. */
+      fields: Array<"materials" | "sizes" | "care">;
+      imagesRead: number;
+      imagesSkipped: number;
+      model?: string;
+      reason?: string;
     };
     warnings: string[];
     fetchedAt?: string;
@@ -277,6 +296,8 @@ export type CareGuide = {
   /** One verdict per care question, read from the same metrics the preference list uses. */
   dryer?: "allowed" | "not_recommended" | "unknown";
   washing_effort?: "easy" | "moderate" | "demanding" | "unknown";
+  /** The care lines were read from detail-page images by a model: reference only. */
+  fromImage?: boolean;
 };
 
 export type AnalysisResult = {

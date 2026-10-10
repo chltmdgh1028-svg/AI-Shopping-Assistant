@@ -4,6 +4,9 @@ import {
   ExtractionProviderError,
   type AiExtractionResult,
   type ExtractionErrorCode,
+  type ImageExtractionInput,
+  type ImageExtractionResult,
+  type ImageInput,
   type PageExtractionInput,
   type ProductExtractionProvider,
 } from "@/services/extraction/aiProvider";
@@ -14,14 +17,35 @@ import {
   geminiSystemInstruction,
   mapGeminiProduct,
 } from "@/services/extraction/geminiSchema";
+import { buildVisionPrompt, mapVisionResult, visionResponseJsonSchema, visionResultSchema, visionSystemInstruction } from "@/services/extraction/visionSchema";
 
-// The route allows 40s and page fetching takes up to 8s, so the whole chain must stay well under 32s.
+// The route allows 60s: link resolution (6s) and the page fetch (8s) come first, so the text chain stays under 28s.
 export const GEMINI_ATTEMPT_TIMEOUT_MS = 12_000;
 export const GEMINI_TOTAL_BUDGET_MS = 28_000;
+// Reading images takes longer than reading text.
+export const GEMINI_VISION_ATTEMPT_TIMEOUT_MS = 14_000;
 const MIN_ATTEMPT_MS = 1_500;
 const maxPageChars = 18_000;
 
-export type GenerateJson = (request: { model: string; systemInstruction: string; prompt: string; signal: AbortSignal }) => Promise<string | undefined>;
+export type GenerateJson = (request: {
+  model: string;
+  systemInstruction: string;
+  prompt: string;
+  signal: AbortSignal;
+  /** Images to look at, before the prompt. Absent for text requests. */
+  images?: ImageInput[];
+  /** JSON Schema for the structured answer. Defaults to the product schema. */
+  schema?: object;
+}) => Promise<string | undefined>;
+
+type Job = {
+  systemInstruction: string;
+  prompt: string;
+  images?: ImageInput[];
+  schema?: object;
+  attemptTimeoutMs: number;
+  totalBudgetMs: number;
+};
 
 /** Server-only provider: the API key never leaves this process and is never logged or returned. */
 export class GeminiProductExtractionProvider implements ProductExtractionProvider {
@@ -51,15 +75,14 @@ export class GeminiProductExtractionProvider implements ProductExtractionProvide
       structuredHint: summarizeStructured(input.structuredProduct),
     });
 
-    const { text, model } = await this.generateWithFallback(prompt);
+    const { text, model } = await this.generateWithFallback({
+      systemInstruction: geminiSystemInstruction,
+      prompt,
+      attemptTimeoutMs: this.attemptTimeoutMs,
+      totalBudgetMs: this.totalBudgetMs,
+    });
 
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(text);
-    } catch {
-      throw new ExtractionProviderError("invalid_output");
-    }
-
+    const parsed = parseJson(text);
     const validated = geminiProductSchema.safeParse(parsed);
     if (!validated.success) throw new ExtractionProviderError("invalid_output");
 
@@ -72,11 +95,30 @@ export class GeminiProductExtractionProvider implements ProductExtractionProvide
   }
 
   /**
+   * Reads detail-page images with the same model chain. The result is plausibility-checked rather than checked against
+   * text (an image has none), capped at medium confidence, and marked image-vision.
+   */
+  async extractFromImages(input: ImageExtractionInput): Promise<ImageExtractionResult> {
+    const { text, model } = await this.generateWithFallback({
+      systemInstruction: visionSystemInstruction,
+      prompt: buildVisionPrompt({ url: input.url, imageCount: input.images.length, want: input.want }),
+      images: input.images,
+      schema: visionResponseJsonSchema,
+      attemptTimeoutMs: Math.min(GEMINI_VISION_ATTEMPT_TIMEOUT_MS, input.budgetMs),
+      totalBudgetMs: input.budgetMs,
+    });
+
+    const validated = visionResultSchema.safeParse(parseJson(text));
+    if (!validated.success) throw new ExtractionProviderError("invalid_output");
+    return { ...mapVisionResult(validated.data), model };
+  }
+
+  /**
    * One attempt per model, in order. Only failures that say "this model is not available right now"
    * move on to the next one; a bad key or a malformed request would fail on every model, so it stops here.
    */
-  private async generateWithFallback(prompt: string) {
-    const deadline = Date.now() + this.totalBudgetMs;
+  private async generateWithFallback(job: Job) {
+    const deadline = Date.now() + job.totalBudgetMs;
     let last: ExtractionProviderError | undefined;
 
     for (const model of this.config.models) {
@@ -84,7 +126,7 @@ export class GeminiProductExtractionProvider implements ProductExtractionProvide
       if (remaining < MIN_ATTEMPT_MS) break;
 
       try {
-        const text = await this.attempt(model, prompt, Math.min(this.attemptTimeoutMs, remaining));
+        const text = await this.attempt(model, job, Math.min(job.attemptTimeoutMs, remaining));
         return { text, model };
       } catch (error) {
         if (!(error instanceof AttemptError)) throw error;
@@ -98,12 +140,19 @@ export class GeminiProductExtractionProvider implements ProductExtractionProvide
     throw last ?? new ExtractionProviderError("timeout");
   }
 
-  private async attempt(model: string, prompt: string, timeoutMs: number) {
+  private async attempt(model: string, job: Job, timeoutMs: number) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
-      const text = await this.generate({ model, systemInstruction: geminiSystemInstruction, prompt, signal: controller.signal });
+      const text = await this.generate({
+        model,
+        systemInstruction: job.systemInstruction,
+        prompt: job.prompt,
+        images: job.images,
+        schema: job.schema,
+        signal: controller.signal,
+      });
       if (!text) throw new AttemptError(new ExtractionProviderError("invalid_output"), false);
       return text;
     } catch (error) {
@@ -111,6 +160,14 @@ export class GeminiProductExtractionProvider implements ProductExtractionProvide
     } finally {
       clearTimeout(timer);
     }
+  }
+}
+
+function parseJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new ExtractionProviderError("invalid_output");
   }
 }
 
@@ -127,14 +184,17 @@ class AttemptError extends Error {
 function createSdkGenerator(config: GeminiConfig): GenerateJson {
   const client = new GoogleGenAI({ apiKey: config.apiKey });
 
-  return async ({ model, systemInstruction, prompt, signal }) => {
+  return async ({ model, systemInstruction, prompt, signal, images, schema }) => {
     const response = await client.models.generateContent({
       model,
-      contents: prompt,
+      // Images go first, then the instruction that says what to look for.
+      contents: images?.length
+        ? [{ role: "user", parts: [...images.map((image) => ({ inlineData: { mimeType: image.mimeType, data: image.data } })), { text: prompt }] }]
+        : prompt,
       config: {
         systemInstruction,
         responseMimeType: "application/json",
-        responseJsonSchema: geminiResponseJsonSchema,
+        responseJsonSchema: schema ?? geminiResponseJsonSchema,
         abortSignal: signal,
         // The SDK retries 429/5xx with backoff by default. That would burn the per-model budget on one
         // model; the chain is the retry strategy, so each model gets exactly one attempt.

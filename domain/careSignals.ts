@@ -123,3 +123,11 @@ const fastDryClaim = /속건|흡한|빠르게\s*(마르|건조)|quick[\s-]?dry|f
 export function readFeatureClaims(text: string): FeatureClaims {
   return { antiPilling: antiPillingClaim.test(text), fastDry: fastDryClaim.test(text) };
 }
+
+// Words that make a line an instruction to the buyer. "소재별 세탁 가이드 바로가기" is a link to a guide, not one.
+const careWords =
+  /손세탁|단독\s*세탁|세탁기|드라이\s*클리닝|건조기|그늘|자연\s*건조|표백|비틀|다림질|울\s*코스|찬물|중성\s*세제|hand\s*wash|machine\s*wash|dry\s*clean|tumble|bleach|\biron|wring|line\s*dry|do\s*not/i;
+
+export function looksLikeCareInstruction(line: string) {
+  return line.length <= 80 && careWords.test(line) && !/바로가기|가이드|https?:|공지/.test(line);
+}

@@ -6,9 +6,12 @@ import {
 } from "@/services/extraction/aiProvider";
 import { applyBundle, buildPricing, formatPrice } from "@/domain/pricing";
 import { extractWithAdapter, type ProductAdapterResult } from "@/services/extraction/adapters";
+import type { StageRecord } from "@/services/extraction/adapters/types";
+import type { JsonPoster } from "@/services/extraction/adapters/zigzagDetailApi";
 import { extractProductFromHtml, extractVisibleText } from "@/services/extraction/htmlExtraction";
 import { resolveProductUrl, type ResolveOutcome } from "@/services/extraction/resolution";
-import { fetchPublicHtml, type SafeFetchResult } from "@/services/extraction/safeFetch";
+import { FETCH_LIMITS, fetchPublicHtml, fetchPublicImage, fetchPublicJson, type SafeFetchResult } from "@/services/extraction/safeFetch";
+import { runVisionFallback, type ImageFetcher } from "@/services/extraction/visionFallback";
 import type { ProductFacts } from "@/types/shopping";
 
 export type UrlExtractionResult =
@@ -21,6 +24,26 @@ export type UrlExtractionResult =
 
 type Fetcher = (url: string) => Promise<SafeFetchResult>;
 type Resolver = (url: string) => Promise<ResolveOutcome>;
+
+export type ExtractionOptions = {
+  /** Calls a site's own JSON API (the size tab). Defaults to the guarded fetcher. */
+  postJson?: JsonPoster;
+  /** Downloads a detail image for the vision fallback. Defaults to the guarded fetcher. */
+  fetchImage?: ImageFetcher;
+  /** Whole-request budget the later stages must fit in (the route allows 60s). */
+  budgetMs?: number;
+  now?: () => number;
+};
+
+// The route allows 60s. Link resolution, the page fetch and the model chain have their own limits; this is what the
+// optional detail stages (size API, image reading) are measured against so they never push the request past it.
+export const REQUEST_BUDGET_MS = 52_000;
+
+const defaultPostJson: JsonPoster = async (url, body) => {
+  const result = await fetchPublicJson(url, body);
+  return result.ok ? { ok: true, data: result.data } : { ok: false };
+};
+const defaultFetchImage: ImageFetcher = (url, timeoutMs) => fetchPublicImage(url, { limits: { ...FETCH_LIMITS, timeoutMs } });
 
 const aiFailureMessages: Record<ExtractionErrorCode, string> = {
   quota: "AI 분석 사용량이 일시적으로 가득 차 페이지에서 직접 읽은 정보만 사용했어요.",
@@ -36,7 +59,10 @@ export async function extractProductFromUrl(
   aiProvider: ProductExtractionProvider = new UnavailableProductExtractionProvider(),
   fetcher: Fetcher = fetchPublicHtml,
   resolver: Resolver = resolveProductUrl,
+  options: ExtractionOptions = {},
 ): Promise<UrlExtractionResult> {
+  const now = options.now ?? Date.now;
+  const startedAt = now();
   // A share, short or deep link is turned into the real product page first. An ordinary URL passes straight through.
   const resolved = await resolver(rawUrl);
   if (!resolved.ok) return resolved;
@@ -48,7 +74,24 @@ export async function extractProductFromUrl(
   // Pages that ship their product as script JSON are read from that data first, with no rendering.
   const adapter = extractWithAdapter(fetched.html, sourceUrl);
   const parsed = extractProductFromHtml(fetched.html, sourceUrl);
-  const base = adapter ? mergeAdapterProduct(parsed, adapter) : parsed;
+  let base = adapter ? mergeAdapterProduct(parsed, adapter) : parsed;
+
+  // Stage 2: what the page holds only behind a click (the size tab) is read from the site's own API, not by clicking.
+  const stages: StageRecord[] = adapter ? [adapter.stage] : [];
+  const stageNotes: string[] = [...(adapter?.warnings ?? [])];
+  if (adapter?.enrich) {
+    try {
+      const extra = await adapter.enrich(options.postJson ?? defaultPostJson);
+      if (extra) {
+        base = fillEmpty(base, extra.product);
+        stages.push(extra.stage);
+        stageNotes.push(...extra.warnings);
+        base.extractionMetadata = base.extractionMetadata && { ...base.extractionMetadata, warnings: [...buildWarnings(base, true), ...stageNotes] };
+      }
+    } catch {
+      // The extra stage is optional; the page's own data already stands.
+    }
+  }
   // The adapter's text comes first: it is the page's real content, and the model reads only the first 18,000 characters.
   const pageText = [adapter?.text, extractVisibleText(fetched.html)].filter(Boolean).join("\n");
   const hasStructuredData = Boolean(adapter) || (base.extractionMetadata?.strategy.includes("json-ld") ?? false);
@@ -73,7 +116,7 @@ export async function extractProductFromUrl(
         aiProvider: aiProvider.providerName,
         aiStatus: "used",
         aiModel: ai.model,
-        warnings: [...buildWarnings(product, hasStructuredData), ...(adapter?.warnings ?? []), ...ai.warnings],
+        warnings: [...buildWarnings(product, hasStructuredData), ...stageNotes, ...ai.warnings],
       };
     } catch (error) {
       const code = error instanceof ExtractionProviderError ? error.code : "upstream";
@@ -92,16 +135,35 @@ export async function extractProductFromUrl(
     return { ok: false, code: "empty_result", message: "상품명을 자동으로 확인하지 못했습니다." };
   }
 
-  const metadata = product.extractionMetadata;
-  const hasMaterials = product.materials.length > 0;
-  const hasSizes = product.sizes.length > 0;
-  product.extractionMetadata = { ...metadata, status: hasMaterials && hasSizes ? "complete" : hasMaterials || hasSizes ? "partial" : "failed" };
-
   product.pricing = applyBundle(product.pricing, product.productName, pageText);
+
+  // Stage 4: when blend, size or care are still empty, read the detail-page images. Fill-only; text values are kept.
+  if (adapter) {
+    const remainingMs = (options.budgetMs ?? REQUEST_BUDGET_MS) - (now() - startedAt);
+    const vision = await runVisionFallback({
+      product,
+      imageUrls: adapter.detailImageUrls,
+      provider: aiProvider,
+      remainingMs,
+      fetchImage: options.fetchImage ?? defaultFetchImage,
+      pageUrl: sourceUrl,
+    });
+    product = vision.product;
+    if (vision.stage) stages.push(vision.stage);
+    if (vision.warnings.length > 0 || vision.stage) {
+      const filled = vision.stage?.fields ?? [];
+      // A blend or size that an image supplied is no longer "missing", so its notice is dropped.
+      const stillTrue = product.extractionMetadata!.warnings.filter(
+        (line) => !(filled.includes("materials") && line.startsWith("소재 혼용률을")) && !(filled.includes("sizes") && line.startsWith("사이즈표를")),
+      );
+      product.extractionMetadata = { ...product.extractionMetadata!, warnings: [...stillTrue, ...vision.warnings] };
+    }
+  }
+  if (stages.length > 0) product.extractionMetadata = { ...product.extractionMetadata!, detailSources: stages };
 
   if (resolved.provider !== "none" && resolved.resolutionType !== "none") {
     product.extractionMetadata = {
-      ...product.extractionMetadata,
+      ...product.extractionMetadata!,
       resolution: {
         provider: resolved.provider,
         resolutionType: resolved.resolutionType,
@@ -113,6 +175,10 @@ export async function extractProductFromUrl(
       },
     };
   }
+
+  const hasMaterials = product.materials.length > 0;
+  const hasSizes = product.sizes.length > 0;
+  product.extractionMetadata = { ...product.extractionMetadata!, status: hasMaterials && hasSizes ? "complete" : hasMaterials || hasSizes ? "partial" : "failed" };
 
   const partial = product.extractionMetadata.status !== "complete" || product.extractionMetadata.warnings.length > 0;
   return { ok: true, product, partial };
@@ -194,4 +260,14 @@ function mergeAdapterProduct(parsed: ProductFacts, adapter: ProductAdapterResult
     };
   }
   return merged;
+}
+
+/** Fills only what is empty: an earlier stage's value is never replaced by a later one. */
+function fillEmpty(base: ProductFacts, extra: Partial<ProductFacts>): ProductFacts {
+  return {
+    ...base,
+    materials: base.materials.length > 0 ? base.materials : (extra.materials ?? base.materials),
+    sizes: base.sizes.length > 0 ? base.sizes : (extra.sizes ?? base.sizes),
+    careInstructions: base.careInstructions?.length ? base.careInstructions : (extra.careInstructions ?? base.careInstructions),
+  };
 }

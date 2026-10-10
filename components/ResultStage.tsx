@@ -163,6 +163,7 @@ export function ResultStage({
           <div className="strip-meta">
             <span>{sourceLabel(result.product.factsSource)}</span>
             <span>{metadataLabel(result)}</span>
+            {result.product.extractionMetadata?.vision?.status === "used" && <span>일부 정보는 상세 이미지에서 AI가 읽었어요.</span>}
             {result.product.extractionMetadata?.resolution && <span>{resolutionLabel(result.product.extractionMetadata.resolution.provider)}</span>}
             {pricing && <span>현재가 {formatPriceLabel(pricing.currentPrice, pricing.currency)}</span>}
           </div>
@@ -389,6 +390,7 @@ const sourceDescriptions: Record<string, string> = {
   meta: "상품 페이지 메타 정보에서 확인",
   page: "상품 페이지 본문에서 확인",
   "gemini-extracted": "AI가 상품 페이지 문구에서 추출하고 페이지의 숫자와 대조",
+  "image-vision": "상세 이미지에서 AI가 읽은 값 (참고용)",
   "user-input": "직접 입력한 값",
   demo: "샘플 데이터",
   inferred: "소재 특성을 기반으로 예상",

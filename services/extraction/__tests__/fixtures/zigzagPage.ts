@@ -5,6 +5,10 @@ type Options = {
   couponPrice?: number | null;
   detailHtml?: string;
   withNextData?: boolean;
+  /** The collapsed "상품정보 제공고시" list. */
+  essentials?: Array<{ name: string; value: string }>;
+  /** Extra <img> tags appended to the seller's description. */
+  images?: string[];
 };
 
 // The seller's detail text of a real Zigzag listing (October 2026), reduced to the lines the app reads. The blend and
@@ -32,6 +36,8 @@ export function zigzagPage({
   couponPrice = 20930,
   detailHtml = realisticDetailHtml,
   withNextData = true,
+  essentials = [],
+  images = [],
 }: Options = {}) {
   const product = {
     id: "172008665",
@@ -50,9 +56,11 @@ export function zigzagPage({
       max_price_info: listPrice === null ? null : { price: listPrice },
       display_final_price: currentPrice === null ? null : { final_price: { price: currentPrice } },
     },
-    description: detailHtml,
+    essentials,
+    description: detailHtml + images.map((src) => `<div><img src="${src}"></div>`).join(""),
   };
   const nextData = {
+    runtimeConfig: { config: { apiConsumerBaseUrl: "https://api.zigzag.kr/api/2" } },
     props: {
       pageProps: {
         dehydratedState: {

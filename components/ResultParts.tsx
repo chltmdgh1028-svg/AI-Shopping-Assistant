@@ -60,7 +60,9 @@ export function ValueCard({ value }: { value?: ValueEvaluation }) {
 
 export function basisLabel(basis: MetricBasis | undefined, confidence: PreferenceMatch["confidence"], source?: EvidenceSource) {
   const base =
-    source === "manufacturer-care"
+    source === "image-vision"
+      ? "상세 이미지에서 AI가 읽은 정보 기준이에요."
+      : source === "manufacturer-care"
       ? "상품 페이지의 관리 안내를 기준으로 했어요."
       : source === "product-page" || basis === "product_page"
         ? "상품 페이지에서 확인한 정보 기준이에요."
@@ -155,6 +157,7 @@ export function storyCareLines(care: CareGuide): Array<{ kind: CareKind; text: s
 }
 
 export function careKicker(care: CareGuide) {
+  if (care.fromImage && care.manufacturer?.length) return "상세 이미지에서 읽은 안내";
   if (care.manufacturer?.length) return "상품 페이지 안내";
   if (care.manufacturer) return "소재 기반 권장";
   return care.source === "product_page" ? "상품 안내 기준" : "소재 기반 추정";
@@ -202,7 +205,7 @@ export function CareSection({ care }: { care: CareGuide }) {
       {verdict.length > 0 && <p className="care-verdict">{verdict.join(" · ")}</p>}
 
       <div className="care-block">
-        <h3>상품 페이지 안내</h3>
+        <h3>{care.fromImage ? "상세 이미지에서 AI가 읽은 안내 (참고)" : "상품 페이지 안내"}</h3>
         {care.manufacturer.length > 0 ? (
           <ul className="care-list">
             {care.manufacturer.map((item) => (
