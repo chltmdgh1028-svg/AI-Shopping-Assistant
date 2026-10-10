@@ -20,13 +20,19 @@ import {
   emptyCloudState,
   ensureSupabaseSession,
   getCloudIdentity,
+  isIdentityConflictError,
   linkKakaoIdentity,
   loadRemoteSnapshot,
+  mergePendingKakaoConflictData,
   migrateLocalSnapshotIfNeeded,
+  parseProviderCallbackError,
+  readPendingKakaoLink,
+  recordProviderCallbackTrace,
   saveRemoteAnalysis,
   saveRemotePreferences,
   saveRemoteProfile,
   signInWithKakao,
+  signInWithKakaoAfterLinkConflict,
   signOutOfSupabase,
   subscribeToAuthChanges,
   AuthFlowError,
@@ -116,13 +122,14 @@ export function ShoppingApp() {
         }
         const beforeMigration = await loadRemoteSnapshot();
         const migrated = await migrateLocalSnapshotIfNeeded(identity.userId, beforeMigration);
-        const remote = await loadRemoteSnapshot();
+        const loadedRemote = await loadRemoteSnapshot();
+        const { snapshot: remote, merged } = await mergePendingKakaoConflictData(loadedRemote);
         if (cancelled) return;
         cacheSnapshot(remote, identity.userId);
         setProfile(remote.profile ?? defaultProfile);
         setPreferences(remote.preferences ?? defaultPreferences);
         setHistory(remote.history);
-        setCloud({ available: true, loading: false, online: true, migrated, identity });
+        setCloud({ available: true, loading: false, online: true, migrated: migrated || merged, identity });
       } catch {
         if (cancelled) return;
         setCloud((current) => ({
@@ -137,9 +144,23 @@ export function ShoppingApp() {
 
     queueMicrotask(() => {
       const params = new URLSearchParams(window.location.search);
-      const authError = params.get("auth_error");
-      if (authError) {
-        setCloud((current) => ({ ...current, loading: false, error: "Kakao 로그인 연결을 완료하지 못했어요. 다시 시도해 주세요." }));
+      const providerError = parseProviderCallbackError(params);
+      if (providerError) {
+        recordProviderCallbackTrace(providerError);
+        const pendingLink = readPendingKakaoLink();
+        if (pendingLink && isIdentityConflictError(providerError)) {
+          setCloud((current) => ({ ...current, loading: true, error: "이미 연결된 Kakao 계정이 있어 해당 계정으로 기록을 합치는 중입니다." }));
+          window.history.replaceState(null, "", window.location.pathname);
+          void signInWithKakaoAfterLinkConflict(providerError).catch(() => {
+            setCloud((current) => ({ ...current, loading: false, error: "기존 Kakao 계정으로 전환하지 못했어요. 다시 시도해 주세요." }));
+          });
+          return;
+        }
+        setCloud((current) => ({
+          ...current,
+          loading: false,
+          error: `Kakao 로그인 연결을 완료하지 못했어요.${providerError.errorDescription ? ` (${providerError.errorDescription})` : ""}`,
+        }));
         window.history.replaceState(null, "", window.location.pathname);
       }
       loadLocal();

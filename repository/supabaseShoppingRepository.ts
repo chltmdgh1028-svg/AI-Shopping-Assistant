@@ -9,6 +9,7 @@ import type { AnalysisResult, UserPreference, UserProfile } from "@/types/shoppi
 
 const migrationKey = (userId: string) => `shopping-assistant:supabase-migrated:${userId}`;
 const pendingKakaoLinkKey = "shopping-assistant:pending-kakao-link";
+const kakaoConflictMergeKey = "shopping-assistant:kakao-conflict-merge";
 const authTraceKey = "shopping-assistant:auth-trace";
 const maxHistory = 12;
 const kakaoProfileScope = "profile_nickname profile_image";
@@ -47,6 +48,21 @@ export type AuthFlowDiagnostics = {
 export type PendingKakaoLink = {
   userId: string;
   startedAt: string;
+};
+
+export type ProviderCallbackError = {
+  authError: string;
+  error?: string;
+  errorCode?: string;
+  errorDescription?: string;
+  errorUri?: string;
+};
+
+type PendingKakaoMerge = {
+  fromAnonymousUserId?: string;
+  snapshot: RemoteShoppingSnapshot;
+  reason: ProviderCallbackError;
+  createdAt: string;
 };
 
 export class AuthFlowError extends Error {
@@ -247,14 +263,74 @@ export async function signInWithKakao() {
   window.location.assign(data.url);
 }
 
+export async function signInWithKakaoAfterLinkConflict(reason: ProviderCallbackError) {
+  const pending = readJson<PendingKakaoLink | null>(pendingKakaoLinkKey, null);
+  const snapshot = getLocalSnapshot();
+  writeJson(kakaoConflictMergeKey, {
+    fromAnonymousUserId: pending?.userId,
+    snapshot,
+    reason,
+    createdAt: new Date().toISOString(),
+  });
+  recordAuthTrace("link:conflict-merge-stashed", {
+    fromAnonymousUserId: pending?.userId,
+    profile: Boolean(snapshot.profile),
+    preferences: snapshot.preferences?.length ?? 0,
+    history: snapshot.history.length,
+    reason,
+  });
+  await signInWithKakao();
+}
+
 export function consumePendingKakaoLink() {
   const pending = readJson<PendingKakaoLink | null>(pendingKakaoLinkKey, null);
   if (typeof window !== "undefined") window.localStorage.removeItem(pendingKakaoLinkKey);
   return pending;
 }
 
+export function readPendingKakaoLink() {
+  return readJson<PendingKakaoLink | null>(pendingKakaoLinkKey, null);
+}
+
 export function validateCompletedKakaoLink(identity: CloudIdentity, pending: PendingKakaoLink) {
   return identity.userId === pending.userId && identity.provider === "kakao" && identity.isAnonymous === false;
+}
+
+export function parseProviderCallbackError(params: URLSearchParams): ProviderCallbackError | null {
+  const authError = params.get("auth_error");
+  if (!authError) return null;
+  return {
+    authError,
+    error: params.get("provider_error") ?? undefined,
+    errorCode: params.get("provider_error_code") ?? undefined,
+    errorDescription: params.get("provider_error_description") ?? undefined,
+    errorUri: params.get("provider_error_uri") ?? undefined,
+  };
+}
+
+export function isIdentityConflictError(error: ProviderCallbackError) {
+  const text = [error.authError, error.error, error.errorCode, error.errorDescription].filter(Boolean).join(" ").toLowerCase();
+  return /(identity|user|account).*(exist|already|linked|conflict)|already.*(exist|linked)|conflict|duplicate/.test(text);
+}
+
+export async function mergePendingKakaoConflictData(remote: RemoteShoppingSnapshot) {
+  const pending = readJson<PendingKakaoMerge | null>(kakaoConflictMergeKey, null);
+  if (!pending) return { snapshot: remote, merged: false };
+
+  const snapshot = {
+    profile: remote.profile ?? pending.snapshot.profile,
+    preferences: remote.preferences ?? pending.snapshot.preferences,
+    history: mergeHistory(remote.history, pending.snapshot.history),
+  };
+  await saveRemoteSnapshot(snapshot);
+  if (typeof window !== "undefined") window.localStorage.removeItem(kakaoConflictMergeKey);
+  recordAuthTrace("link:conflict-merge-complete", {
+    fromAnonymousUserId: pending.fromAnonymousUserId,
+    profile: Boolean(pending.snapshot.profile),
+    preferences: pending.snapshot.preferences?.length ?? 0,
+    history: pending.snapshot.history.length,
+  });
+  return { snapshot, merged: true };
 }
 
 export async function signOutOfSupabase() {
@@ -366,6 +442,10 @@ function recordAuthTrace(stage: string, detail: unknown) {
   const next = [...previous, { stage, at: new Date().toISOString(), detail }].slice(-20);
   writeJson(authTraceKey, next);
   console.info(`[auth:${stage}]`, detail);
+}
+
+export function recordProviderCallbackTrace(error: ProviderCallbackError) {
+  recordAuthTrace("callback:provider-error", error);
 }
 
 function stringMetadata(value: unknown) {

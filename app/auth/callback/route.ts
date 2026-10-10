@@ -4,10 +4,15 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 export async function GET(request: NextRequest) {
   const url = new URL(request.url);
   const code = url.searchParams.get("code");
-  const providerError = url.searchParams.get("error") ?? url.searchParams.get("error_code");
+  const providerError = {
+    error: url.searchParams.get("error"),
+    errorCode: url.searchParams.get("error_code"),
+    errorDescription: url.searchParams.get("error_description"),
+    errorUri: url.searchParams.get("error_uri"),
+  };
   const next = sanitizeNext(url.searchParams.get("next")) ?? "/";
 
-  if (providerError) return redirectWithAuthError(url, "provider_error");
+  if (providerError.error || providerError.errorCode) return redirectWithAuthError(url, "provider_error", providerError);
   if (!code) return redirectWithAuthError(url, "missing_code");
 
   const supabase = await createSupabaseServerClient();
@@ -40,8 +45,22 @@ function sanitizeNext(next: string | null) {
   return next;
 }
 
-function redirectWithAuthError(url: URL, reason: string) {
+function redirectWithAuthError(
+  url: URL,
+  reason: string,
+  providerError?: {
+    error: string | null;
+    errorCode: string | null;
+    errorDescription: string | null;
+    errorUri: string | null;
+  },
+) {
   url.pathname = "/";
-  url.search = `?auth_error=${encodeURIComponent(reason)}`;
+  const params = new URLSearchParams({ auth_error: reason });
+  if (providerError?.error) params.set("provider_error", providerError.error);
+  if (providerError?.errorCode) params.set("provider_error_code", providerError.errorCode);
+  if (providerError?.errorDescription) params.set("provider_error_description", providerError.errorDescription);
+  if (providerError?.errorUri) params.set("provider_error_uri", providerError.errorUri);
+  url.search = params.toString();
   return NextResponse.redirect(url);
 }
