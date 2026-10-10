@@ -27,7 +27,7 @@ export function CloudSyncCard({
   }
 
   const identity = state.identity;
-  const isLinked = Boolean(identity && !identity.isAnonymous);
+  const isLinked = Boolean(identity?.isLinked);
   return (
     <aside className="cloud-sync-card" aria-live="polite">
       {identity?.avatarUrl ? <img src={identity.avatarUrl} alt="" /> : <Cloud size={18} aria-hidden="true" />}

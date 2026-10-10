@@ -17,6 +17,8 @@ export type CloudIdentity = {
   displayName?: string;
   avatarUrl?: string;
   provider?: string;
+  linkedProviders: string[];
+  isLinked: boolean;
 };
 
 export type CloudState = {
@@ -264,12 +266,22 @@ function identityFromUser(user: User): CloudIdentity {
   const metadata = user.user_metadata ?? {};
   const identities = user.identities ?? [];
   const provider = identities.find((identity) => identity.provider !== "anonymous")?.provider;
+  const linkedProviders = identities.map((identity) => identity.provider).filter(Boolean);
+  const kakaoData = identities.find((identity) => identity.provider === "kakao")?.identity_data ?? {};
   return {
     userId: user.id,
     isAnonymous: Boolean(user.is_anonymous),
-    displayName: stringMetadata(metadata.name) ?? stringMetadata(metadata.full_name) ?? stringMetadata(metadata.nickname) ?? stringMetadata(metadata.preferred_username),
-    avatarUrl: stringMetadata(metadata.avatar_url) ?? stringMetadata(metadata.picture),
+    displayName:
+      stringMetadata(metadata.name) ??
+      stringMetadata(metadata.full_name) ??
+      stringMetadata(metadata.nickname) ??
+      stringMetadata(metadata.preferred_username) ??
+      stringMetadata(kakaoData.name) ??
+      stringMetadata(kakaoData.nickname),
+    avatarUrl: stringMetadata(metadata.avatar_url) ?? stringMetadata(metadata.picture) ?? stringMetadata(kakaoData.avatar_url) ?? stringMetadata(kakaoData.picture) ?? stringMetadata(kakaoData.profile_image_url),
     provider,
+    linkedProviders,
+    isLinked: linkedProviders.some((linkedProvider) => linkedProvider !== "anonymous"),
   };
 }
 
