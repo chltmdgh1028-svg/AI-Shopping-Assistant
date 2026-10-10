@@ -8,6 +8,7 @@ import { archiveShoppingCache, cacheOwnerKey, clearShoppingCache, localShoppingR
 import type { AnalysisResult, UserPreference, UserProfile } from "@/types/shopping";
 
 const migrationKey = (userId: string) => `shopping-assistant:supabase-migrated:${userId}`;
+const pendingKakaoLinkKey = "shopping-assistant:pending-kakao-link";
 const maxHistory = 12;
 const kakaoProfileScope = "profile_nickname profile_image";
 
@@ -40,6 +41,11 @@ export type AuthFlowDiagnostics = {
   isAnonymous?: boolean;
   providers: string[];
   currentProvider?: string;
+};
+
+export type PendingKakaoLink = {
+  userId: string;
+  startedAt: string;
 };
 
 export class AuthFlowError extends Error {
@@ -214,6 +220,7 @@ export async function linkKakaoIdentity() {
   });
   if (error) throw toAuthFlowError("Kakao identity linking URL을 만들지 못했습니다.", error, before);
   if (!data.url) throw new AuthFlowError("Kakao identity linking URL이 비어 있습니다.", before);
+  writeJson(pendingKakaoLinkKey, { userId: user.id, startedAt: new Date().toISOString() });
   window.location.assign(data.url);
 }
 
@@ -230,6 +237,16 @@ export async function signInWithKakao() {
   if (error) throw error;
   if (!data.url) throw new Error("Kakao login URL is empty.");
   window.location.assign(data.url);
+}
+
+export function consumePendingKakaoLink() {
+  const pending = readJson<PendingKakaoLink | null>(pendingKakaoLinkKey, null);
+  if (typeof window !== "undefined") window.localStorage.removeItem(pendingKakaoLinkKey);
+  return pending;
+}
+
+export function validateCompletedKakaoLink(identity: CloudIdentity, pending: PendingKakaoLink) {
+  return identity.userId === pending.userId && identity.provider === "kakao" && identity.isAnonymous === false;
 }
 
 export async function signOutOfSupabase() {
@@ -281,7 +298,7 @@ function identityFromUser(user: User): CloudIdentity {
     avatarUrl: stringMetadata(metadata.avatar_url) ?? stringMetadata(metadata.picture) ?? stringMetadata(kakaoData.avatar_url) ?? stringMetadata(kakaoData.picture) ?? stringMetadata(kakaoData.profile_image_url),
     provider,
     linkedProviders,
-    isLinked: linkedProviders.some((linkedProvider) => linkedProvider !== "anonymous"),
+    isLinked: Boolean(provider) && user.is_anonymous === false,
   };
 }
 

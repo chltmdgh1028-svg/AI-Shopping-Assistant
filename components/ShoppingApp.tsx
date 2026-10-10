@@ -15,6 +15,7 @@ import { demoProduct, demoUrl } from "@/data/demoProduct";
 import { localShoppingRepository } from "@/repository/localShoppingRepository";
 import {
   cacheSnapshot,
+  consumePendingKakaoLink,
   deleteRemoteAnalysis,
   emptyCloudState,
   ensureSupabaseSession,
@@ -29,6 +30,7 @@ import {
   signOutOfSupabase,
   subscribeToAuthChanges,
   AuthFlowError,
+  validateCompletedKakaoLink,
   type CloudState,
 } from "@/repository/supabaseShoppingRepository";
 import { analyzeProduct } from "@/services/analyzeProduct";
@@ -108,6 +110,10 @@ export function ShoppingApp() {
         const session = await ensureSupabaseSession();
         const identity = await getCloudIdentity(session);
         if (!identity) throw new Error("Supabase session is not available.");
+        const pendingKakaoLink = consumePendingKakaoLink();
+        if (pendingKakaoLink && !validateCompletedKakaoLink(identity, pendingKakaoLink)) {
+          throw new Error("Kakao identity linking did not complete with the original user.");
+        }
         const beforeMigration = await loadRemoteSnapshot();
         const migrated = await migrateLocalSnapshotIfNeeded(identity.userId, beforeMigration);
         const remote = await loadRemoteSnapshot();
