@@ -104,6 +104,11 @@ export type ProductSize = {
   hip?: number;
   length?: number;
   sleeve?: number;
+  /** Trousers and skirts: thigh width, rise and hem; tops: the armhole. Circumferences and lengths in cm, like the rest. */
+  thigh?: number;
+  rise?: number;
+  hem?: number;
+  armhole?: number;
   unit?: "cm" | "inch";
   source?: ExtractionSource;
   confidence?: ExtractionConfidence;
@@ -133,7 +138,7 @@ export type ProductPricing = {
 export type ProductFacts = {
   productName: string;
   brand?: string;
-  category: "knitwear" | "shirt" | "pants" | "outerwear" | "dress" | "unknown";
+  category: "knitwear" | "shirt" | "top" | "pants" | "skirt" | "outerwear" | "dress" | "unknown";
   /** Display string kept for older saved results. New code reads pricing. */
   price?: string;
   currency?: string;
@@ -171,11 +176,23 @@ export type ProductFacts = {
       status: "used" | "no_result" | "skipped" | "failed";
       /** Only fields that text had left empty are ever filled from images. */
       fields: Array<"materials" | "sizes" | "care">;
+      /** Images downloaded and decoded, and images left out (not fetched, too late, or unreadable). */
       imagesRead: number;
       imagesSkipped: number;
+      /** Tiles cut from those images (a long image becomes several). */
+      tiles?: number;
+      /** direct: few tiles, all read. scan: the model picked from contact sheets. heuristic: the pick failed, so looks decided. */
+      mode?: "direct" | "scan" | "heuristic";
+      /** The labels ("17-2" = image 17, tile 2) the scan picked for each kind of information. */
+      candidates?: { materials: string[]; sizes: string[]; care: string[] };
+      /** Where each filled field was read: which image and tile, and how sure. */
+      evidence?: Array<{ field: "materials" | "sizes" | "care"; imageIndex: number; tileIndex?: number; confidence: ExtractionConfidence }>;
+      durationsMs?: { fetch: number; scan?: number; detail?: number; total: number };
       model?: string;
       reason?: string;
     };
+    /** Where the time of one analysis went. */
+    timingsMs?: { resolve: number; page: number; sizeApi?: number; textAi?: number; vision?: number; total: number };
     warnings: string[];
     fetchedAt?: string;
   };

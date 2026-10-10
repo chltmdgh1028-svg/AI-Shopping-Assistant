@@ -66,9 +66,11 @@ export async function extractProductFromUrl(
   // A share, short or deep link is turned into the real product page first. An ordinary URL passes straight through.
   const resolved = await resolver(rawUrl);
   if (!resolved.ok) return resolved;
+  const resolvedAt = now();
 
   const fetched = await fetcher(resolved.canonicalUrl);
   if (!fetched.ok) return fetched;
+  const fetchedAt = now();
 
   const sourceUrl = fetched.finalUrl;
   // Pages that ship their product as script JSON are read from that data first, with no rendering.
@@ -79,7 +81,9 @@ export async function extractProductFromUrl(
   // Stage 2: what the page holds only behind a click (the size tab) is read from the site's own API, not by clicking.
   const stages: StageRecord[] = adapter ? [adapter.stage] : [];
   const stageNotes: string[] = [...(adapter?.warnings ?? [])];
+  let sizeApiMs: number | undefined;
   if (adapter?.enrich) {
+    const apiStarted = now();
     try {
       const extra = await adapter.enrich(options.postJson ?? defaultPostJson);
       if (extra) {
@@ -91,6 +95,7 @@ export async function extractProductFromUrl(
     } catch {
       // The extra stage is optional; the page's own data already stands.
     }
+    sizeApiMs = now() - apiStarted;
   }
   // The adapter's text comes first: it is the page's real content, and the model reads only the first 18,000 characters.
   const pageText = [adapter?.text, extractVisibleText(fetched.html)].filter(Boolean).join("\n");
@@ -99,6 +104,7 @@ export async function extractProductFromUrl(
 
   let product: ProductFacts = base;
 
+  const textAiStarted = now();
   if (aiProvider.isAvailable()) {
     try {
       const ai = await aiProvider.extract({
@@ -131,6 +137,8 @@ export async function extractProductFromUrl(
     product.extractionMetadata = { ...baseMetadata, aiProvider: "unavailable", aiStatus: "not_configured" };
   }
 
+  const textAiMs = aiProvider.isAvailable() ? now() - textAiStarted : undefined;
+
   if (!product.productName || product.productName === "상품명 미확인") {
     return { ok: false, code: "empty_result", message: "상품명을 자동으로 확인하지 못했습니다." };
   }
@@ -138,8 +146,10 @@ export async function extractProductFromUrl(
   product.pricing = applyBundle(product.pricing, product.productName, pageText);
 
   // Stage 4: when blend, size or care are still empty, read the detail-page images. Fill-only; text values are kept.
+  let visionMs: number | undefined;
   if (adapter) {
     const remainingMs = (options.budgetMs ?? REQUEST_BUDGET_MS) - (now() - startedAt);
+    const visionStarted = now();
     const vision = await runVisionFallback({
       product,
       imageUrls: adapter.detailImageUrls,
@@ -149,6 +159,7 @@ export async function extractProductFromUrl(
       pageUrl: sourceUrl,
     });
     product = vision.product;
+    visionMs = product.extractionMetadata?.vision ? now() - visionStarted : undefined;
     if (vision.stage) stages.push(vision.stage);
     if (vision.warnings.length > 0 || vision.stage) {
       const filled = vision.stage?.fields ?? [];
@@ -160,6 +171,10 @@ export async function extractProductFromUrl(
     }
   }
   if (stages.length > 0) product.extractionMetadata = { ...product.extractionMetadata!, detailSources: stages };
+  product.extractionMetadata = {
+    ...product.extractionMetadata!,
+    timingsMs: { resolve: resolvedAt - startedAt, page: fetchedAt - resolvedAt, sizeApi: sizeApiMs, textAi: textAiMs, vision: visionMs, total: now() - startedAt },
+  };
 
   if (resolved.provider !== "none" && resolved.resolutionType !== "none") {
     product.extractionMetadata = {

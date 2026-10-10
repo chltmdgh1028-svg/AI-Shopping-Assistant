@@ -3,6 +3,8 @@ import type { GeminiConfig } from "@/lib/env";
 import {
   ExtractionProviderError,
   type AiExtractionResult,
+  type CandidateScanInput,
+  type CandidateScanResult,
   type ExtractionErrorCode,
   type ImageExtractionInput,
   type ImageExtractionResult,
@@ -17,13 +19,17 @@ import {
   geminiSystemInstruction,
   mapGeminiProduct,
 } from "@/services/extraction/geminiSchema";
+import { buildScanPrompt, candidateScanJsonSchema, candidateScanSchema, parseCandidates, scanSystemInstruction } from "@/services/extraction/visionCandidates";
 import { buildVisionPrompt, mapVisionResult, visionResponseJsonSchema, visionResultSchema, visionSystemInstruction } from "@/services/extraction/visionSchema";
 
 // The route allows 60s: link resolution (6s) and the page fetch (8s) come first, so the text chain stays under 28s.
 export const GEMINI_ATTEMPT_TIMEOUT_MS = 12_000;
 export const GEMINI_TOTAL_BUDGET_MS = 28_000;
 // Reading images takes longer than reading text.
-export const GEMINI_VISION_ATTEMPT_TIMEOUT_MS = 30_000;
+export const GEMINI_VISION_ATTEMPT_TIMEOUT_MS = 20_000;
+// Choosing candidates from thumbnails is a short job; it must not eat the time the detailed read needs.
+export const GEMINI_SCAN_ATTEMPT_TIMEOUT_MS = 9_000;
+const MIN_SCAN_ATTEMPT_MS = 4_000;
 // A vision retry on another model needs real time to finish; with less than this it would only time out too.
 const MIN_VISION_ATTEMPT_MS = 9_000;
 const MIN_ATTEMPT_MS = 1_500;
@@ -36,6 +42,8 @@ export type GenerateJson = (request: {
   signal: AbortSignal;
   /** Images to look at, before the prompt. Absent for text requests. */
   images?: ImageInput[];
+  /** A label for each image, put in front of it so the answer can refer to it. */
+  imageLabels?: string[];
   /** JSON Schema for the structured answer. Defaults to the product schema. */
   schema?: object;
 }) => Promise<string | undefined>;
@@ -44,6 +52,7 @@ type Job = {
   systemInstruction: string;
   prompt: string;
   images?: ImageInput[];
+  imageLabels?: string[];
   schema?: object;
   attemptTimeoutMs: number;
   totalBudgetMs: number;
@@ -106,6 +115,7 @@ export class GeminiProductExtractionProvider implements ProductExtractionProvide
       systemInstruction: visionSystemInstruction,
       prompt: buildVisionPrompt({ url: input.url, imageCount: input.images.length, want: input.want }),
       images: input.images,
+      imageLabels: input.labels,
       schema: visionResponseJsonSchema,
       attemptTimeoutMs: Math.min(GEMINI_VISION_ATTEMPT_TIMEOUT_MS, input.budgetMs),
       totalBudgetMs: input.budgetMs,
@@ -114,7 +124,24 @@ export class GeminiProductExtractionProvider implements ProductExtractionProvide
 
     const validated = visionResultSchema.safeParse(parseJson(text));
     if (!validated.success) throw new ExtractionProviderError("invalid_output");
-    return { ...mapVisionResult(validated.data), model };
+    return { ...mapVisionResult(validated.data, input.want), model };
+  }
+
+  /** Looks at contact sheets and returns the labels of the cells worth a close read. Reads no text and extracts no facts. */
+  async scanDetailImages(input: CandidateScanInput): Promise<CandidateScanResult> {
+    const { text, model } = await this.generateWithFallback({
+      systemInstruction: scanSystemInstruction,
+      prompt: buildScanPrompt({ sheetLabels: input.sheetLabels, columns: input.columns, want: input.want }),
+      images: input.sheets,
+      schema: candidateScanJsonSchema,
+      attemptTimeoutMs: Math.min(GEMINI_SCAN_ATTEMPT_TIMEOUT_MS, input.budgetMs),
+      totalBudgetMs: input.budgetMs,
+      minAttemptMs: MIN_SCAN_ATTEMPT_MS,
+    });
+
+    const validated = candidateScanSchema.safeParse(parseJson(text));
+    if (!validated.success) throw new ExtractionProviderError("invalid_output");
+    return { candidates: parseCandidates(validated.data, new Set(input.sheetLabels.flat()), input.want), model };
   }
 
   /**
@@ -155,6 +182,7 @@ export class GeminiProductExtractionProvider implements ProductExtractionProvide
         systemInstruction: job.systemInstruction,
         prompt: job.prompt,
         images: job.images,
+        imageLabels: job.imageLabels,
         schema: job.schema,
         signal: controller.signal,
       });
@@ -189,13 +217,21 @@ class AttemptError extends Error {
 function createSdkGenerator(config: GeminiConfig): GenerateJson {
   const client = new GoogleGenAI({ apiKey: config.apiKey });
 
-  return async ({ model, systemInstruction, prompt, signal, images, schema }) => {
+  return async ({ model, systemInstruction, prompt, signal, images, imageLabels, schema }) => {
     const startedAt = Date.now();
     const response = await client.models.generateContent({
       model,
       // Images go first, then the instruction that says what to look for.
       contents: images?.length
-        ? [{ role: "user", parts: [...images.map((image) => ({ inlineData: { mimeType: image.mimeType, data: image.data } })), { text: prompt }] }]
+        ? [
+            {
+              role: "user",
+              parts: [
+                ...images.flatMap((image, index) => [...(imageLabels?.[index] ? [{ text: `Image ${imageLabels[index]}:` }] : []), { inlineData: { mimeType: image.mimeType, data: image.data } }]),
+                { text: prompt },
+              ],
+            },
+          ]
         : prompt,
       config: {
         systemInstruction,

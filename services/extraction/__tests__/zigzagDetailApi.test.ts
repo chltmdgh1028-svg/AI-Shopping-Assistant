@@ -24,7 +24,7 @@ const mislabelled = [
 describe("size table from the size tab's API", () => {
   it("reads a one-size top and turns the laid-flat chest into a circumference", () => {
     const { sizes, warnings } = parseSizeTable(oneSize, "(단위 : cm)");
-    expect(sizes).toEqual([{ name: "FREE", length: 49, shoulder: 34, chest: 87, sleeve: 56, unit: "cm", source: "structured-data", confidence: "high" }]);
+    expect(sizes).toEqual([{ name: "FREE", length: 49, shoulder: 34, chest: 87, armhole: 20, sleeve: 56, unit: "cm", source: "structured-data", confidence: "high" }]);
     expect(warnings.join(" ")).toContain("단면");
   });
 

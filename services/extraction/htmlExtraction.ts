@@ -1,3 +1,4 @@
+import { categorizeProduct } from "@/domain/garment";
 import { readMaterialShares } from "@/domain/materialParsing";
 import { formatPrice } from "@/domain/pricing";
 import { extractPricing } from "@/services/extraction/priceExtraction";
@@ -150,14 +151,7 @@ function extractTitle(html: string) {
   return decodeHtml(html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? "").trim();
 }
 
-export function categorize(text: string): ProductFacts["category"] {
-  if (/knit|sweater|cardigan|니트|가디건/i.test(text)) return "knitwear";
-  if (/shirt|셔츠|블라우스/i.test(text)) return "shirt";
-  if (/pants|trouser|jean|팬츠|바지|데님/i.test(text)) return "pants";
-  if (/coat|jacket|outer|코트|자켓|재킷|아우터/i.test(text)) return "outerwear";
-  if (/dress|원피스/i.test(text)) return "dress";
-  return "unknown";
-}
+export const categorize = categorizeProduct;
 
 function buildWarnings(structured: Partial<ProductFacts> | undefined, pageDerived: ProductFacts, hasPrice: boolean) {
   const warnings: string[] = [];

@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { buildVisionPrompt, mapVisionResult, visionResultSchema, visionSystemInstruction, type VisionResult } from "@/services/extraction/visionSchema";
+import { buildVisionPrompt, mapVisionResult, parseLabel, visionResultSchema, visionSystemInstruction, type VisionResult } from "@/services/extraction/visionSchema";
 
-const empty: VisionResult = { readability: "clear", materials: [], sizes: [], careInstructions: [] };
+const found = { materials: [], sizes: [], care: [] };
+const empty: VisionResult = { readability: "clear", materials: [], sizes: [], careInstructions: [], foundIn: found };
 const size = (overrides: Partial<VisionResult["sizes"][number]> = {}): VisionResult["sizes"][number] => ({
   name: "M",
   shoulder: null,
@@ -10,24 +11,36 @@ const size = (overrides: Partial<VisionResult["sizes"][number]> = {}): VisionRes
   hip: null,
   length: null,
   sleeve: null,
+  thigh: null,
+  rise: null,
+  hem: null,
+  armhole: null,
   unit: "cm",
-  chestIsFlatWidth: null,
+  flatWidth: null,
   ...overrides,
 });
 
 describe("what the vision model is asked", () => {
-  it("is told to copy only what is printed and to ignore instructions inside images", () => {
+  it("is told to copy only what is printed, to ignore instructions inside images, and to name the images it read", () => {
     expect(visionSystemInstruction).toContain("Never guess");
     expect(visionSystemInstruction).toContain("untrusted");
     expect(visionSystemInstruction).toContain("model wears");
+    expect(visionSystemInstruction).toContain("foundIn");
   });
 
-  it("names what to look for and how many images it gets", () => {
-    const prompt = buildVisionPrompt({ url: "https://zigzag.kr/p/1", imageCount: 5, want: ["materials", "care"] });
-    expect(prompt).toContain("5 images");
-    expect(prompt).toContain("fabric composition");
-    expect(prompt).toContain("care instructions");
-    expect(prompt).not.toContain("size table");
+  it("scopes the request to the fields that are missing", () => {
+    const materialsOnly = buildVisionPrompt({ url: "https://zigzag.kr/p/1", imageCount: 3, want: ["materials"] });
+    expect(materialsOnly).toContain("3 images");
+    expect(materialsOnly).toContain("fabric composition");
+    expect(materialsOnly).not.toContain("size table");
+    expect(materialsOnly).toContain("Leave these fields empty: sizes, care");
+
+    const sizesOnly = buildVisionPrompt({ url: "https://zigzag.kr/p/1", imageCount: 2, want: ["sizes"] });
+    expect(sizesOnly).toContain("size table");
+    expect(sizesOnly).not.toContain("fabric composition");
+
+    const both = buildVisionPrompt({ url: "https://zigzag.kr/p/1", imageCount: 2, want: ["materials", "sizes", "care"] });
+    expect(both).not.toContain("Leave these fields empty");
   });
 
   it("rejects an answer that does not have the expected shape", () => {
@@ -44,13 +57,27 @@ describe("reading the model's answer", () => {
         { name: "Cotton", percentage: 60 },
         { name: "Polyester", percentage: 40 },
       ],
-      sizes: [size({ chest: 100, length: 65 })],
+      sizes: [size({ chest: 100, length: 65, flatWidth: false })],
       careInstructions: ["단독 손세탁"],
     });
     expect(reading.confidence).toBe("medium");
     expect(reading.materials.every((item) => item.source === "image-vision" && item.confidence === "medium")).toBe(true);
     expect(reading.sizes[0]).toMatchObject({ name: "M", chest: 100, length: 65, unit: "cm", source: "image-vision", confidence: "medium" });
     expect(reading.careInstructions).toEqual(["단독 손세탁"]);
+  });
+
+  it("only returns the fields that were asked for", () => {
+    const answer = { ...empty, materials: [{ name: "Cotton", percentage: 100 }], sizes: [size({ chest: 100, flatWidth: false })], careInstructions: ["단독 손세탁"] };
+    expect(mapVisionResult(answer, ["materials"])).toMatchObject({ sizes: [], careInstructions: [] });
+    expect(mapVisionResult(answer, ["materials"]).materials).toHaveLength(1);
+    expect(mapVisionResult(answer, ["sizes"]).materials).toEqual([]);
+    expect(mapVisionResult(answer, ["sizes"]).sizes).toHaveLength(1);
+    expect(mapVisionResult(answer, ["care"])).toMatchObject({ materials: [], sizes: [] });
+  });
+
+  it("does not warn about data it was not asked for", () => {
+    const answer = { ...empty, sizes: [size({ chest: 52 })] };
+    expect(mapVisionResult(answer, ["materials"]).warnings).toEqual([]);
   });
 
   it("lowers confidence when the model says part of it was hard to read", () => {
@@ -83,31 +110,19 @@ describe("reading the model's answer", () => {
   });
 
   it("converts inches to centimetres", () => {
-    const reading = mapVisionResult({ ...empty, sizes: [size({ chest: 40, length: 26, unit: "inch" })] });
+    const reading = mapVisionResult({ ...empty, sizes: [size({ chest: 40, length: 26, unit: "inch", flatWidth: false })] });
     expect(reading.sizes[0]).toMatchObject({ chest: 101.6, length: 66 });
     expect(reading.warnings.join(" ")).toContain("인치");
   });
 
-  it("doubles a laid-flat chest, whether the table says so or the number is too small to be a circumference", () => {
-    const labelled = mapVisionResult({ ...empty, sizes: [size({ chest: 52, waist: 40, chestIsFlatWidth: true })] });
-    expect(labelled.sizes[0]).toMatchObject({ chest: 104, waist: 80 });
-
-    const unlabelled = mapVisionResult({ ...empty, sizes: [size({ chest: 52 })] });
-    expect(unlabelled.sizes[0].chest).toBe(104);
-    expect(unlabelled.warnings.join(" ")).toContain("단면");
-
-    const circumference = mapVisionResult({ ...empty, sizes: [size({ chest: 52, chestIsFlatWidth: false })] });
-    expect(circumference.sizes[0].chest).toBe(52);
-  });
-
   it("rejects measurements that cannot belong to a garment", () => {
-    const reading = mapVisionResult({ ...empty, sizes: [size({ shoulder: 400, chest: 100 }), size({ name: "L", chest: 106 })] });
+    const reading = mapVisionResult({ ...empty, sizes: [size({ shoulder: 400, chest: 100, flatWidth: false }), size({ name: "L", chest: 106, flatWidth: false })] });
     expect(reading.sizes.map((row) => row.name)).toEqual(["L"]);
     expect(reading.warnings.join(" ")).toContain("M 사이즈");
   });
 
   it("keeps one row per size name and skips rows with no numbers", () => {
-    const reading = mapVisionResult({ ...empty, sizes: [size({ chest: 100 }), size({ chest: 101 }), size({ name: "L" })] });
+    const reading = mapVisionResult({ ...empty, sizes: [size({ chest: 100, flatWidth: false }), size({ chest: 101, flatWidth: false }), size({ name: "L" })] });
     expect(reading.sizes).toHaveLength(1);
     expect(reading.sizes[0].chest).toBe(100);
   });
@@ -115,5 +130,70 @@ describe("reading the model's answer", () => {
   it("keeps only lines that read like care instructions", () => {
     const reading = mapVisionResult({ ...empty, careInstructions: ["단독 손세탁", "그늘에서 건조", "소재별 세탁 가이드 바로가기", "무료배송 이벤트", "Do not bleach"] });
     expect(reading.careInstructions).toEqual(["단독 손세탁", "그늘에서 건조", "Do not bleach"]);
+  });
+});
+
+describe("size tables by garment", () => {
+  it("TOP: shoulder, chest, sleeve, length", () => {
+    const [top] = mapVisionResult({ ...empty, sizes: [size({ shoulder: 45, chest: 104, sleeve: 60, length: 66, flatWidth: false })] }).sizes;
+    expect(top).toMatchObject({ shoulder: 45, chest: 104, sleeve: 60, length: 66 });
+  });
+
+  it("BOTTOM: waist, hip, thigh, rise, hem, length, with the laid-flat widths doubled", () => {
+    const [bottom] = mapVisionResult({ ...empty, sizes: [size({ name: "28", waist: 36, hip: 48, thigh: 30, rise: 29, hem: 20, length: 100, flatWidth: true })] }).sizes;
+    expect(bottom).toMatchObject({ waist: 72, hip: 96, thigh: 60, rise: 29, hem: 40, length: 100, source: "image-vision" });
+  });
+
+  it("ONE-PIECE: shoulder, chest, waist, hip, sleeve, length", () => {
+    const [dress] = mapVisionResult({ ...empty, sizes: [size({ name: "FREE", shoulder: 38, chest: 46, waist: 38, hip: 52, sleeve: 56, length: 110, flatWidth: true })] }).sizes;
+    expect(dress).toMatchObject({ shoulder: 38, chest: 92, waist: 76, hip: 104, sleeve: 56, length: 110 });
+  });
+
+  it("SKIRT: waist, hip, length, hem", () => {
+    const [skirt] = mapVisionResult({ ...empty, sizes: [size({ name: "S", waist: 32, hip: 44, length: 60, hem: 40, flatWidth: true })] }).sizes;
+    expect(skirt).toMatchObject({ waist: 64, hip: 88, length: 60, hem: 80 });
+  });
+
+  it("does not double a width the table calls a circumference", () => {
+    const [row] = mapVisionResult({ ...empty, sizes: [size({ chest: 52, flatWidth: false })] }).sizes;
+    expect(row.chest).toBe(52);
+  });
+
+  it("does not double a width that is too large to be a laid-flat one, even when the table says 단면", () => {
+    const reading = mapVisionResult({ ...empty, sizes: [size({ chest: 126, flatWidth: true })] });
+    expect(reading.sizes[0].chest).toBe(126);
+    expect(reading.sizes[0].confidence).toBe("low");
+    expect(reading.warnings.join(" ")).toContain("그대로");
+  });
+
+  it("does not guess when a number could be either: unlabelled and in the overlap, it is kept as printed", () => {
+    const reading = mapVisionResult({ ...empty, sizes: [size({ chest: 78 })] });
+    expect(reading.sizes[0].chest).toBe(78);
+    expect(reading.sizes[0].confidence).toBe("low");
+  });
+
+  it("doubles an unlabelled width only when it cannot be a circumference", () => {
+    const reading = mapVisionResult({ ...empty, sizes: [size({ chest: 52 })] });
+    expect(reading.sizes[0].chest).toBe(104);
+    expect(reading.warnings.join(" ")).toContain("단면");
+  });
+});
+
+describe("where a value was read", () => {
+  it("parses image and tile labels", () => {
+    expect(parseLabel("17")).toEqual({ imageIndex: 17, tileIndex: undefined });
+    expect(parseLabel("17-2")).toEqual({ imageIndex: 17, tileIndex: 2 });
+    expect(parseLabel("abc")).toBeUndefined();
+    expect(parseLabel("1-2-3")).toBeUndefined();
+  });
+
+  it("records the image and tile for each field that was filled, and nothing for fields that were not", () => {
+    const reading = mapVisionResult({
+      ...empty,
+      materials: [{ name: "Cotton", percentage: 100 }],
+      sizes: [],
+      foundIn: { materials: ["17-2", "bad"], sizes: ["31"], care: [] },
+    });
+    expect(reading.evidence).toEqual([{ field: "materials", imageIndex: 17, tileIndex: 2, confidence: "medium" }]);
   });
 });

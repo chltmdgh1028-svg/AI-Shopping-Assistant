@@ -1,10 +1,11 @@
 import { looksLikeCareInstruction } from "@/domain/careSignals";
+import { interpretWidth, type Measure, type WidthLabel } from "@/domain/sizeMeasurements";
 import { readMaterialShares } from "@/domain/materialParsing";
 import { buildPricing, formatPriceLabel } from "@/domain/pricing";
 import { categorize, extractFit, extractSizes } from "@/services/extraction/htmlExtraction";
 import type { AdapterEnrichment, ProductAdapterResult } from "@/services/extraction/adapters/types";
 import { fetchZigzagSizes, type JsonPoster } from "@/services/extraction/adapters/zigzagDetailApi";
-import type { DetailField, ProductSize } from "@/types/shopping";
+import type { DetailField, ExtractionConfidence, ProductSize } from "@/types/shopping";
 
 type Json = Record<string, unknown>;
 
@@ -81,33 +82,48 @@ const number = "(\\d+(?:\\.\\d+)?)";
  * Many sellers print one size as a line of measurements: "SIZE / 어깨34 가슴43.5 암홀20 / 소매총장56 총장49".
  * Without a size label the garment is a single (free) size.
  */
-function readFlatSize(lines: string): { size: ProductSize; flat: boolean } | undefined {
+const flatNames: Partial<Record<Measure, string>> = { chest: "가슴", waist: "허리", hip: "엉덩이", thigh: "허벅지", hem: "밑단" };
+
+function readFlatSize(lines: string): { size: ProductSize; notes: string[] } | undefined {
   const segment = lines.match(/\bSIZE\b[^\n]*(?:\n[^\n]*){0,3}/i)?.[0];
   if (!segment) return undefined;
 
-  const pick = (pattern: RegExp) => {
-    const value = segment.match(pattern)?.[1];
+  const find = (measure: Measure, name: string, extra = "") => {
+    const match = segment.match(new RegExp(`${name}(단면|둘레)?${extra}\\s*${number}`));
+    return match ? { printed: Number(match[2]), label: (match[1] === "단면" ? "flat" : match[1] === "둘레" ? "circumference" : "unknown") as WidthLabel } : undefined;
+  };
+
+  const notes: string[] = [];
+  let confidence: ExtractionConfidence = "medium";
+  const values: Partial<Record<Measure, number>> = {};
+
+  for (const measure of ["chest", "waist", "hip", "thigh", "hem"] as const) {
+    const found = find(measure, flatNames[measure]!);
+    if (!found) continue;
+    const reading = interpretWidth(measure, found.printed, found.label, { bodyHem: /가슴|어깨/.test(segment) });
+    values[measure] = reading.value;
+    if (reading.converted) notes.push(`${flatNames[measure]} 치수 ${found.printed}cm는 단면 기준으로 보고 둘레 ${reading.value}cm로 환산했어요.`);
+    else if (reading.note) notes.push(reading.note);
+    if (reading.confidence === "low") confidence = "low";
+  }
+
+  const plain = (name: string, extra = "") => {
+    const value = segment.match(new RegExp(`${name}${extra}\\s*${number}`))?.[1];
     return value ? Number(value) : undefined;
   };
-  const chest = pick(new RegExp(`가슴(?:단면)?\\s*${number}`));
-  if (chest === undefined) return undefined;
+  values.shoulder = plain("어깨", "(?:단면)?");
+  values.rise = plain("밑위");
+  values.armhole = plain("암홀", "(?:단면)?");
+  values.sleeve = plain("소매", "(?:총장|길이)?");
+  values.length = plain("(?<!소매)(?:총장|총기장|기장)");
 
-  // Sellers list the width of the laid-flat garment. No adult chest is under 70cm round, so that is a half measure.
-  const flat = chest < 70;
-  return {
-    flat,
-    size: {
-      name: "FREE",
-      shoulder: pick(new RegExp(`어깨\\s*${number}`)),
-      chest: flat ? chest * 2 : chest,
-      length: pick(new RegExp(`(?<!소매)총장\\s*${number}`)),
-      sleeve: pick(new RegExp(`소매(?:총장|길이)?\\s*${number}`)),
-      unit: "cm",
-      source: "structured-data",
-      confidence: "medium",
-    },
-  };
+  // A size line with no waist or chest (or any other body measurement) is not a size table.
+  if (values.chest === undefined && values.waist === undefined && values.hip === undefined) return undefined;
+
+  return { notes, size: { name: "FREE", ...clean(values), unit: "cm", source: "structured-data", confidence } };
 }
+
+const clean = (values: Partial<Record<Measure, number>>) => Object.fromEntries(Object.entries(values).filter(([, value]) => value !== undefined)) as Partial<Record<Measure, number>>;
 
 function readCareLines(lines: string) {
   return lines
@@ -202,7 +218,7 @@ export function extractZigzagProduct(html: string): ProductAdapterResult | undef
   const care = [...new Set([...readCareLines(detail), ...noticeCare.filter((line) => looksLikeCareInstruction(line))])].slice(0, 8);
 
   const warnings: string[] = [];
-  if (flatSize?.flat) warnings.push(`가슴 치수 ${(flatSize.size.chest ?? 0) / 2}cm는 단면 기준으로 보고 둘레 ${flatSize.size.chest}cm로 환산했어요.`);
+  if (flatSize) warnings.push(...flatSize.notes);
 
   const productId = text(product.id) ?? (typeof product.id === "number" ? String(product.id) : undefined);
   const apiBase = text(at(nextData, "runtimeConfig", "config", "apiConsumerBaseUrl"));

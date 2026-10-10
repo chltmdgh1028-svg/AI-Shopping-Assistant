@@ -232,20 +232,21 @@ describe("GeminiProductExtractionProvider", () => {
         { name: "Cotton", percentage: 60 },
         { name: "Polyester", percentage: 40 },
       ],
-      sizes: [{ name: "M", shoulder: null, chest: 100, waist: null, hip: null, length: 65, sleeve: null, unit: "cm", chestIsFlatWidth: false }],
+      sizes: [{ name: "M", shoulder: null, chest: 100, waist: null, hip: null, length: 65, sleeve: null, thigh: null, rise: null, hem: null, armhole: null, unit: "cm", flatWidth: false }],
       careInstructions: ["단독 손세탁"],
+      foundIn: { materials: ["17-2"], sizes: ["31"], care: [] },
     });
-    const request = { url: "https://zigzag.kr/p/1", images, want: ["materials" as const, "sizes" as const, "care" as const], budgetMs: 10_000 };
+    const request = { url: "https://zigzag.kr/p/1", images, labels: ["17-2", "31"], want: ["materials" as const, "sizes" as const, "care" as const], budgetMs: 10_000 };
 
-    it("sends the images, the vision instruction and the vision schema, then maps the answer as image-vision", async () => {
+    it("sends the images with their labels, the vision instruction and the vision schema, then maps the answer as image-vision", async () => {
       const generate = vi.fn<GenerateJson>(async () => visionAnswer);
       const result = await providerWith(generate).extractFromImages(request);
 
       const sent = generate.mock.calls[0][0];
       expect(sent.images).toEqual(images);
+      expect(sent.imageLabels).toEqual(["17-2", "31"]);
       expect(sent.systemInstruction).toContain("untrusted");
-      expect(sent.systemInstruction).toContain("size table");
-      expect(sent.schema).toMatchObject({ required: expect.arrayContaining(["readability", "materials"]) });
+      expect(sent.schema).toMatchObject({ required: expect.arrayContaining(["readability", "materials", "foundIn"]) });
       expect(sent.prompt).toContain("2 images");
 
       expect(result.model).toBe("model-a");
@@ -253,6 +254,19 @@ describe("GeminiProductExtractionProvider", () => {
       expect(result.sizes[0]).toMatchObject({ name: "M", chest: 100, source: "image-vision" });
       expect(result.careInstructions).toEqual(["단독 손세탁"]);
       expect(result.confidence).toBe("medium");
+      expect(result.evidence).toEqual([
+        { field: "materials", imageIndex: 17, tileIndex: 2, confidence: "medium" },
+        { field: "sizes", imageIndex: 31, tileIndex: undefined, confidence: "medium" },
+      ]);
+    });
+
+    it("asks only for the missing field and returns only that field", async () => {
+      const generate = vi.fn<GenerateJson>(async () => visionAnswer);
+      const result = await providerWith(generate).extractFromImages({ ...request, want: ["materials"] });
+      expect(generate.mock.calls[0][0].prompt).toContain("Leave these fields empty: sizes, care");
+      expect(result.sizes).toEqual([]);
+      expect(result.careInstructions).toEqual([]);
+      expect(result.materials).toHaveLength(2);
     });
 
     it("uses the same model chain: a rate-limited model hands over to the next", async () => {
@@ -263,7 +277,7 @@ describe("GeminiProductExtractionProvider", () => {
         if (model === "model-a") throw Object.assign(new Error("x"), { status: 429 });
         return visionAnswer;
       };
-      const result = await providerWith(generate).extractFromImages(request);
+      const result = await providerWith(generate).extractFromImages({ ...request, budgetMs: 30_000 });
       expect(tried).toEqual(["model-a", "model-b"]);
       expect(result.model).toBe("model-b");
       spy.mockRestore();
@@ -284,5 +298,30 @@ describe("GeminiProductExtractionProvider", () => {
       await providerWith(generate).extractFromImages(request);
       expect(JSON.stringify(generate.mock.calls[0][0])).not.toContain("test-key-not-real");
     });
+  });
+
+  describe("picking candidates from contact sheets", () => {
+    const sheet = { mimeType: "image/jpeg", data: "SHEET" };
+    const scan = { sheets: [sheet], sheetLabels: [["1", "2", "17-1", "17-2", "31"]], columns: 4, want: ["materials" as const, "sizes" as const], budgetMs: 10_000 };
+
+    it("sends the sheets with the scan instruction and keeps only labels that were on a sheet", async () => {
+      const generate = vi.fn<GenerateJson>(async () => JSON.stringify({ materialCandidates: ["17-2", "99"], sizeCandidates: ["31"], careCandidates: ["1"] }));
+      const result = await providerWith(generate).scanDetailImages(scan);
+
+      const sent = generate.mock.calls[0][0];
+      expect(sent.images).toEqual([sheet]);
+      expect(sent.systemInstruction).toContain("contact sheets");
+      expect(sent.prompt).toContain("Sheet 1, 4 columns, cells in reading order: 1, 2, 17-1, 17-2, 31");
+      expect(sent.schema).toMatchObject({ required: ["materialCandidates", "sizeCandidates", "careCandidates"] });
+      // care was not asked about, so its pick is ignored; 99 was never on a sheet.
+      expect(result.candidates).toEqual({ materials: ["17-2"], sizes: ["31"], care: [] });
+    });
+
+    it("uses a short attempt, so a slow scan cannot eat the detailed read's time", async () => {
+      const slow: GenerateJson = ({ signal }) => new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(new Error("aborted"))));
+      const started = Date.now();
+      await expect(providerWith(slow).scanDetailImages({ ...scan, budgetMs: 4_500 })).rejects.toMatchObject({ code: "timeout" });
+      expect(Date.now() - started).toBeLessThan(6_000);
+    }, 10_000);
   });
 });

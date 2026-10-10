@@ -1,4 +1,5 @@
-import type { ProductSize } from "@/types/shopping";
+import { interpretWidth, isWidthMeasure, type Measure, type WidthLabel } from "@/domain/sizeMeasurements";
+import type { ExtractionConfidence, ProductSize } from "@/types/shopping";
 
 // The size tab of a Zigzag product page is not in the page's HTML. The site's own front end loads it with one GraphQL
 // call to its public API, and that call is repeated here (no browser, no click). Only api.zigzag.kr is ever called.
@@ -25,11 +26,14 @@ export function sizeInfoRequest(apiBase: string | undefined, productId: string):
   };
 }
 
-type Measure = "shoulder" | "chest" | "waist" | "hip" | "length" | "sleeve";
-
-// Header names of the size table → the measurement they hold. Sleeve is tested before length: "소매길이" contains "길이".
+// Header names of the size table → the measurement they hold. Order matters: "소매길이" (sleeve length) must not be read as
+// the garment length, and "소매단면" (a sleeve width) matches nothing because no fit decision uses it.
 const columns: Array<[Measure, RegExp]> = [
-  ["sleeve", /소매/],
+  ["sleeve", /소매\s*(?:길이|총\s*장|장)|^\s*소매\s*$/],
+  ["armhole", /암홀/],
+  ["rise", /밑위/],
+  ["thigh", /허벅지/],
+  ["hem", /밑단|햄/],
   ["length", /총\s*기장|총\s*장|기장|길이/],
   ["shoulder", /어깨/],
   ["chest", /가슴/],
@@ -45,60 +49,64 @@ function normalizeSizeName(raw: string) {
   return /^(F|F\/F|FREE.*|.*\/\s*FREE|ONE ?SIZE|원사이즈.*|프리.*|단일.*)$/i.test(name) ? "FREE" : name;
 }
 
-// The widest a laid-flat width can plausibly be. A bigger number under a "단면" header is a circumference that the seller
-// put in the wrong column (doubling it would give a 250cm chest), so it is used as written.
-const widestFlat: Partial<Record<Measure, number>> = { chest: 85, waist: 75, hip: 90 };
+const labelOf = (header: string): WidthLabel => (/단면/.test(header) ? "flat" : /둘레/.test(header) ? "circumference" : "unknown");
+
+const confidenceRank: Record<ExtractionConfidence, number> = { low: 0, medium: 1, high: 2 };
 
 /**
- * One table of "value_list" rows: a header row, then one row per size. A header that says "단면" is a laid-flat width, so
- * chest, waist and hip are doubled to a circumference; the shoulder is already a straight width. Cells that are not a
- * plain number ("-", "49~50") are left out rather than guessed.
+ * One table of "value_list" rows: a header row, then one row per size. Works for tops, trousers, skirts and dresses alike:
+ * the columns decide which measurements exist. A width the header calls "단면" (laid flat) is doubled only if it is small
+ * enough to be one; a number that is too large to be a flat width is a circumference in the wrong column and is used as
+ * written (see interpretWidth). Cells that are not a plain number ("-", "49~50") are left out rather than guessed.
  */
 export function parseSizeTable(valueList: unknown, note = ""): { sizes: ProductSize[]; warnings: string[] } {
-  const warnings: string[] = [];
-  if (!Array.isArray(valueList) || valueList.length < 2) return { sizes: [], warnings };
+  const warnings = new Set<string>();
+  if (!Array.isArray(valueList) || valueList.length < 2) return { sizes: [], warnings: [] };
 
   const rows = valueList.filter((row): row is unknown[] => Array.isArray(row)).map((row) => row.map((cell) => (typeof cell === "string" || typeof cell === "number" ? String(cell) : "")));
   const header = rows[0];
   const nameColumn = header.findIndex((cell) => /사이즈|size/i.test(cell));
-  if (nameColumn === -1) return { sizes: [], warnings };
+  if (nameColumn === -1) return { sizes: [], warnings: [] };
 
-  const indexFor = new Map<Measure, { index: number; flat: boolean }>();
+  const indexFor = new Map<Measure, { index: number; label: WidthLabel }>();
   header.forEach((cell, index) => {
     const found = columns.find(([, pattern]) => pattern.test(cell));
-    if (found && !indexFor.has(found[0])) indexFor.set(found[0], { index, flat: /단면/.test(cell) });
+    if (found && !indexFor.has(found[0])) indexFor.set(found[0], { index, label: labelOf(cell) });
   });
 
   const factor = /inch|인치/i.test(note) ? 2.54 : 1;
+  // A table with a chest or a shoulder column describes a top, a dress or an outer: its hem is as wide as the body.
+  const bodyHem = indexFor.has("chest") || indexFor.has("shoulder");
   const sizes: ProductSize[] = [];
-  let doubled = false;
-  let mislabelled = false;
 
   for (const row of rows.slice(1, 21)) {
     const name = normalizeSizeName(row[nameColumn] ?? "");
     if (!name || name.length > 12) continue;
 
     const values: Partial<Record<Measure, number>> = {};
-    for (const [measure, { index, flat }] of indexFor) {
+    let confidence: ExtractionConfidence = "high";
+    for (const [measure, { index, label }] of indexFor) {
       const cell = row[index];
       if (cell === undefined || !isNumber(cell)) continue;
-      const base = Number(cell.replace(/cm/i, "").trim()) * factor;
-      const flatLimit = widestFlat[measure];
-      const looksFlat = flat && flatLimit !== undefined && base <= flatLimit;
-      const wide = looksFlat;
-      if (flat && flatLimit !== undefined && !looksFlat) mislabelled = true;
-      if (wide) doubled = true;
-      values[measure] = Math.round((wide ? base * 2 : base) * 10) / 10;
+      const printed = Number(cell.replace(/cm/i, "").trim()) * factor;
+
+      if (isWidthMeasure(measure)) {
+        const reading = interpretWidth(measure, Math.round(printed * 10) / 10, label, { bodyHem });
+        values[measure] = reading.value;
+        if (reading.converted) warnings.add("사이즈표의 단면 치수를 둘레로 환산했어요.");
+        if (reading.note && !reading.converted) warnings.add(reading.note);
+        if (confidenceRank[reading.confidence] < confidenceRank[confidence]) confidence = reading.confidence;
+      } else {
+        values[measure] = Math.round(printed * 10) / 10;
+      }
     }
     if (Object.keys(values).length === 0) continue;
 
-    sizes.push({ name, ...values, unit: "cm", source: "structured-data", confidence: "high" });
+    sizes.push({ name, ...values, unit: "cm", source: "structured-data", confidence });
   }
 
-  if (doubled) warnings.push("사이즈표의 단면 치수를 둘레로 환산했어요.");
-  if (mislabelled) warnings.push("단면이라고 적혀 있지만 값이 커서 둘레 치수로 보고 그대로 사용했어요.");
-  if (factor !== 1) warnings.push("인치 단위 사이즈표를 cm로 환산했어요.");
-  return { sizes, warnings };
+  if (factor !== 1) warnings.add("인치 단위 사이즈표를 cm로 환산했어요.");
+  return { sizes, warnings: [...warnings] };
 }
 
 /** The size table for a product, from the site's own API. undefined when the tab holds no table. */

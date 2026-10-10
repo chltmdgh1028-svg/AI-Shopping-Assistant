@@ -1,4 +1,6 @@
 import { getGeminiConfig } from "@/lib/env";
+import type { Candidates } from "@/services/extraction/visionCandidates";
+import type { VisionEvidence, VisionField } from "@/services/extraction/visionSchema";
 import type { ExtractionConfidence, MaterialBlend, ProductFacts, ProductSize } from "@/types/shopping";
 
 export type PageExtractionInput = {
@@ -15,10 +17,24 @@ export type ImageInput = { mimeType: string; data: string };
 export type ImageExtractionInput = {
   url: string;
   images: ImageInput[];
-  /** What the text left empty. The model is asked for all three but only these may be used. */
-  want: Array<"materials" | "sizes" | "care">;
+  /** The label of each image ("17-2"), in the same order, so the answer can say where it read something. */
+  labels?: string[];
+  /** What the text left empty. The model is asked for these only, and only these may be used. */
+  want: VisionField[];
   budgetMs: number;
 };
+
+export type CandidateScanInput = {
+  /** Contact sheets, each a picture of numbered thumbnails. */
+  sheets: ImageInput[];
+  /** The cell numbers of each sheet, in reading order. */
+  sheetLabels: string[][];
+  columns: number;
+  want: VisionField[];
+  budgetMs: number;
+};
+
+export type CandidateScanResult = { candidates: Candidates; model?: string };
 
 export type ImageExtractionResult = {
   materials: MaterialBlend[];
@@ -26,6 +42,8 @@ export type ImageExtractionResult = {
   careInstructions: string[];
   confidence: ExtractionConfidence;
   warnings: string[];
+  /** Which image (and tile) each field was read from. */
+  evidence: VisionEvidence[];
   model?: string;
 };
 
@@ -33,6 +51,8 @@ export type ProductExtractionProvider = {
   extract(input: PageExtractionInput): Promise<AiExtractionResult>;
   /** Reads detail-page images when the text had no blend or size table. Optional: not every provider can see. */
   extractFromImages?(input: ImageExtractionInput): Promise<ImageExtractionResult>;
+  /** First look at a page with many detail images: which of them are worth reading. */
+  scanDetailImages?(input: CandidateScanInput): Promise<CandidateScanResult>;
   isAvailable(): boolean;
   providerName: "unavailable" | "mock" | "gemini";
 };

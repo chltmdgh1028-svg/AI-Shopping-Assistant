@@ -8,8 +8,8 @@ import type { ProductFacts } from "@/types/shopping";
 type Category = Exclude<ProductFacts["category"], "unknown">;
 
 export const baselinePrice: Record<string, Record<Category, number>> = {
-  KRW: { knitwear: 45_000, shirt: 35_000, pants: 40_000, outerwear: 80_000, dress: 50_000 },
-  USD: { knitwear: 35, shirt: 28, pants: 32, outerwear: 65, dress: 40 },
+  KRW: { knitwear: 45_000, shirt: 35_000, top: 30_000, pants: 40_000, skirt: 40_000, outerwear: 80_000, dress: 50_000 },
+  USD: { knitwear: 35, shirt: 28, top: 25, pants: 32, skirt: 30, outerwear: 65, dress: 40 },
 };
 
 // Relative raw-material cost of a fiber, with polyester = 1.

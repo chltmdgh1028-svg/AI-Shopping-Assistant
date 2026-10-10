@@ -35,7 +35,7 @@ describe("Zigzag product adapter", () => {
 
   it("reads the printed measurements as one size and turns the laid-flat chest into a circumference", () => {
     expect(product.sizes).toEqual([
-      { name: "FREE", shoulder: 34, chest: 87, length: 49, sleeve: 56, unit: "cm", source: "structured-data", confidence: "medium" },
+      { name: "FREE", shoulder: 34, chest: 87, armhole: 20, length: 49, sleeve: 56, unit: "cm", source: "structured-data", confidence: "medium" },
     ]);
     expect(result.warnings.join(" ")).toContain("43.5cm");
     expect(result.warnings.join(" ")).toContain("87cm");

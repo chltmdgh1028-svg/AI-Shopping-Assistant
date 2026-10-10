@@ -59,13 +59,15 @@ describe("Gemini SDK call", () => {
     const provider = new GeminiProductExtractionProvider({ apiKey: "test-key-not-real", models: ["gemini-test-model"] });
     // The mocked SDK answers with a product-shaped JSON, which the vision schema rejects: only the request matters here.
     await provider
-      .extractFromImages({ url: "https://zigzag.kr/p/1", images: [{ mimeType: "image/jpeg", data: "AAAA" }], want: ["materials"], budgetMs: 10_000 })
+      .extractFromImages({ url: "https://zigzag.kr/p/1", images: [{ mimeType: "image/jpeg", data: "AAAA" }], labels: ["17-2"], want: ["materials"], budgetMs: 10_000 })
       .catch(() => undefined);
 
     const { request } = calls[0];
     const contents = request.contents as Array<{ role: string; parts: Array<Record<string, unknown>> }>;
     expect(contents[0].role).toBe("user");
-    expect(contents[0].parts[0]).toEqual({ inlineData: { mimeType: "image/jpeg", data: "AAAA" } });
+    // Each image is introduced by its label, so the answer can say which one it read.
+    expect(contents[0].parts[0]).toEqual({ text: "Image 17-2:" });
+    expect(contents[0].parts[1]).toEqual({ inlineData: { mimeType: "image/jpeg", data: "AAAA" } });
     expect(typeof contents[0].parts.at(-1)?.text).toBe("string");
     expect((request.config as Record<string, unknown>).responseJsonSchema).toMatchObject({ required: expect.arrayContaining(["readability"]) });
     expect(JSON.stringify(request)).not.toContain("test-key-not-real");
